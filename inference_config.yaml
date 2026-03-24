@@ -1,0 +1,31 @@
+# Training or inference
+TRAIN: false
+
+# Dataset folder and Excel path
+DATASET_FOLDER: "./Dataset"
+EXCEL_PATH: "EventsEtnaCLASS_Final.xlsx"
+
+# Device to use for inference
+TEST_DEVICE: cuda
+
+# Output directories for saving results
+TEST_SAVE_DIR_TEST: "Model_Results_1/test"
+# TEST_SAVE_DIR_VAL: "Model_Results_1/val"
+# TEST_SAVE_DIR_TRAIN: "Model_Results_1/train"
+
+# Test options to control which split to run on
+TEST_RUN_TEST_SET: true
+TEST_RUN_VAL_SET: false
+TEST_RUN_TRAIN_SET: false
+
+# Path to the trained model checkpoint
+TEST_CHECKPOINT_PATH: "../convUnet_Best_Test_mod_1/best_model.pth"
+
+# Other test parameters
+TEST_MAX_BATCHES_DEFAULT: 10
+TEST_GIF_FPS: 2
+TEST_MEAN: null
+TEST_STD: null
+TEST_SAVE_IMAGES: true
+TEST_SAVE_GIFS: true
+TEST_SHOW_PLOTS: false

@@ -1,0 +1,28 @@
+# Example YAML config for main.py
+# Keys must match the variable names used in the script.
+
+# Training
+TRAIN: true
+NUM_EPOCHS: 50
+LR: 0.001
+DEVICE: cuda
+PATIENCE_EARLY_STOPPING: 10
+PATIENCE_LR_SCHEDULER: 6
+LR_FACTOR: 0.5
+LR_THRESHOLD: 1e-4
+CHECKPOINT_INTERVAL: 1
+CHECKPOINT_DIR: "Checkpoints"
+ALPHA: 0.7
+# Test
+TEST_DEVICE: cuda
+TEST_SAVE_DIR_TEST: "Model_Results_1/test"
+TEST_SAVE_DIR_VAL: "Model_Results_1/val"
+TEST_SAVE_DIR_TRAIN: "Model_Results_1/train"
+TEST_MAX_BATCHES_DEFAULT: 10
+TEST_GIF_FPS: 2
+TEST_MEAN: null
+TEST_STD: null
+TEST_CHECKPOINT_PATH: "../convUnet_Best_Test_mod_1/best_model.pth"
+TEST_SAVE_IMAGES: true
+TEST_SAVE_GIFS: true
+TEST_SHOW_PLOTS: false

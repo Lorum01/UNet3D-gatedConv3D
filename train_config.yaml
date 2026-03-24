@@ -1,0 +1,43 @@
+# training or inference
+TRAIN: true
+
+# Dataset folder and Excel path
+DATASET_FOLDER: "./Dataset"
+EXCEL_PATH: "EventsEtnaCLASS_Final.xlsx"
+
+# Parametri per la generazione delle sequenze
+INPUT_LENGTH: 4
+PREDICTION_LENGTH: 4  
+STRIDE: 1
+
+# Batch sizes
+BATCH_SIZE_TRAIN: 4
+BATCH_SIZE_VAL: 4
+BATCH_SIZE_TEST: 4
+
+# Data normalization and class distribution
+SCALE_TO_NEG1_POS1: true
+USE_PERCENT_DISTRIBUTION: true
+CLASS_PCT:
+  1: {train: 0.7, val: 0.15, test: 0.15}
+  2: {train: 0.7, val: 0.15, test: 0.15}
+  3: {train: 0.7, val: 0.15, test: 0.15}
+  4: {train: 0.7, val: 0.15, test: 0.15}
+
+# Device to use for training
+DEVICE: "cuda"
+
+# Checkpoint directory to save trained model
+CHECKPOINT_DIR: "Checkpoints"
+
+# Training parameters
+NUM_EPOCHS: 250
+LR: 1e-3
+CHECKPOINT_INTERVAL: 10
+PATIENCE_EARLY_STOPPING: 80
+PATIENCE_LR_SCHEDULER: 12
+LR_FACTOR: 0.5
+LR_THRESHOLD: 1e-4
+
+#loss function parameters
+ALPHA: 0.7

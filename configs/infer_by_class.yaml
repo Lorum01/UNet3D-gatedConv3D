@@ -1,0 +1,44 @@
+mode: infer
+
+paths:
+  dataset_folder: "C:/Users/loren/Downloads/Test_dataset"
+  excel_path: "./EventsEtnaCLASS_Final.xlsx"
+
+data:
+  # Modalità richiesta: niente split train/val/test, solo raggruppamento per classe (da Excel)
+  split_strategy: "by_class"   # "train_val_test" | "by_class"
+
+  input_length: 4
+  prediction_length: 4
+  stride: 1
+  expected_input_shape: [4, 100, 100, 3]
+  scale_to_neg1_pos1: true
+
+dataloader:
+  batch_size_test: 4
+
+model:
+  unet_in_channels: 3
+  unet_base_channels: 32
+  unet_num_levels: 5
+  unet_out_channels: 64
+  stackedconv_hidden_dims: [64, 128, 256, 512]
+  stackedconv_kernel_size: 3
+  stackedconv_padding: 1
+  final_out_channels: 3
+
+infer:
+  device: "cuda"
+  checkpoint_path: "./Checkpoints/convUnet_Best_Test_mod_1/best_model.pth"
+
+  # Root output: verrà creato `Model_Results_1/by_class/class_<id>/...`
+  save_dir_by_class_root: "Model_Results_1/by_class"
+
+  max_batches: 10
+  gif_fps: 2
+  mean: null
+  std: null
+  save_images: true
+  save_gifs: true
+  show_plots: false
+

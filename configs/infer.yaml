@@ -1,0 +1,53 @@
+mode: infer
+
+paths:
+  dataset_folder: "../Dataset"
+  excel_path: "../EventsEtnaCLASS_Final.xlsx"
+
+data:
+  input_length: 4
+  prediction_length: 4
+  stride: 1
+  expected_input_shape: [4, 100, 100, 3]
+  scale_to_neg1_pos1: true
+  use_percent_distribution: true
+  class_pct:
+    1: {train: 0.7, val: 0.15, test: 0.15}
+    2: {train: 0.7, val: 0.15, test: 0.15}
+    3: {train: 0.7, val: 0.15, test: 0.15}
+    4: {train: 0.7, val: 0.15, test: 0.15}
+  split_seed: 424
+
+dataloader:
+  batch_size_train: 4
+  batch_size_val: 4
+  batch_size_test: 4
+
+model:
+  unet_in_channels: 3
+  unet_base_channels: 32
+  unet_num_levels: 5
+  unet_out_channels: 64
+  stackedconv_hidden_dims: [64, 128, 256, 512]
+  stackedconv_kernel_size: 3
+  stackedconv_padding: 1
+  final_out_channels: 3
+
+infer:
+  device: "cuda"
+  checkpoint_path: "../convUnet_Best_Test_mod_1/best_model.pth"
+  save_dir_test: "Model_Results_1/test"
+  save_dir_val: "Model_Results_1/val"
+  save_dir_train: "Model_Results_1/train"
+  max_batches: 10
+  gif_fps: 2
+  mean: null
+  std: null
+  save_images: true
+  save_gifs: true
+  show_plots: false
+
+  #inferenza solo su dati di test
+  run_test: true
+  run_val: false
+  run_train: false

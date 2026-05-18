@@ -1,0 +1,48 @@
+mode: train
+
+paths:
+  dataset_folder: "../Dataset"
+  excel_path: "../EventsEtnaCLASS_Final.xlsx"
+
+data:
+  input_length: 4
+  prediction_length: 4
+  stride: 1
+  expected_input_shape: [4, 100, 100, 3]   # (T, H, W, C)
+  scale_to_neg1_pos1: true
+  use_percent_distribution: true
+  class_pct:
+    1: {train: 0.7, val: 0.15, test: 0.15}
+    2: {train: 0.7, val: 0.15, test: 0.15}
+    3: {train: 0.7, val: 0.15, test: 0.15}
+    4: {train: 0.7, val: 0.15, test: 0.15}
+  split_seed: 424
+
+dataloader:
+  batch_size_train: 4
+  batch_size_val: 4
+  batch_size_test: 4
+
+model:
+  unet_in_channels: 3
+  unet_base_channels: 32
+  unet_num_levels: 5
+  unet_out_channels: 64
+  stackedconv_hidden_dims: [64, 128, 256, 512]
+  stackedconv_kernel_size: 3
+  stackedconv_padding: 1
+  final_out_channels: 3
+
+train:
+  device: "cuda"
+  num_epochs: 250
+  lr: 1.0e-3
+  checkpoint_dir: "Checkpoints"
+  checkpoint_interval: 10
+  patience_early_stopping: 80
+  patience_lr_scheduler: 12
+  lr_factor: 0.5
+  lr_threshold: 1.0e-4
+  alpha: 0.7
+  show_plots: false
+

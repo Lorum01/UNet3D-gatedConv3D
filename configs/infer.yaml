@@ -1,8 +1,8 @@
 mode: infer
 
 paths:
-  dataset_folder: "../Dataset"
-  excel_path: "../EventsEtnaCLASS_Final.xlsx"
+  dataset_folder: "./Dataset"
+  excel_path: "./EventsEtnaCLASS_Final.xlsx"
 
 data:
   input_length: 4
@@ -35,7 +35,7 @@ model:
 
 infer:
   device: "cuda"
-  checkpoint_path: "../convUnet_Best_Test_mod_1/best_model.pth"
+  checkpoint_path: "./Checkpoints/convUnet_Best_Test_mod_1/best_model.pth"
   save_dir_test: "Model_Results_1/test"
   save_dir_val: "Model_Results_1/val"
   save_dir_train: "Model_Results_1/train"

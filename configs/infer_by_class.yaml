@@ -1,7 +1,7 @@
 mode: infer
 
 paths:
-  dataset_folder: "C:/Users/loren/Downloads/Test_dataset"
+  dataset_folder: "Test_dataset"
   excel_path: "./EventsEtnaCLASS_Final.xlsx"
 
 data:
@@ -31,7 +31,7 @@ infer:
   device: "cuda"
   checkpoint_path: "./Checkpoints/convUnet_Best_Test_mod_1/best_model.pth"
 
-  # Root output: verrà creato `Model_Results_1/by_class/class_<id>/...`
+  # Root output: `Model_Results_1/by_class/class_<id>/...`
   save_dir_by_class_root: "Model_Results_1/by_class"
 
   max_batches: 10

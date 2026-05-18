@@ -1,8 +1,8 @@
 mode: train
 
 paths:
-  dataset_folder: "../Dataset"
-  excel_path: "../EventsEtnaCLASS_Final.xlsx"
+  dataset_folder: "./Dataset"
+  excel_path: "./EventsEtnaCLASS_Final.xlsx"
 
 data:
   input_length: 4

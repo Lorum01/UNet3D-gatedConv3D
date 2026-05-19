@@ -42,3 +42,4 @@ infer:
   save_gifs: true
   show_plots: false
 
+#python scripts/run.py --config configs/infer_by_class.yaml  

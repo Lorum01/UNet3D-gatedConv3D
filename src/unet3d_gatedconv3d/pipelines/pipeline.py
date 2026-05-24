@@ -17,6 +17,7 @@ def run(cfg: Dict[str, Any], project_root: Path) -> None:
 
     loaders = build_dataloaders(cfg)
     model = build_model(cfg["model"])
+    data_scale_to_neg1_pos1 = bool((cfg.get("data") or {}).get("scale_to_neg1_pos1", True))
 
     if mode == "train":
         if isinstance(loaders, dict):
@@ -51,6 +52,15 @@ def run(cfg: Dict[str, Any], project_root: Path) -> None:
 
     resolved_ckpt = str((project_root / checkpoint_path).resolve()) if not Path(checkpoint_path).is_absolute() else checkpoint_path
 
+    # Visualization denorm choice:
+    # - if infer.denorm_from_neg1_pos1 is set, it overrides data.scale_to_neg1_pos1
+    # - else it follows data.scale_to_neg1_pos1 (backwards-compatible behavior)
+    denorm_from_neg1_pos1 = icfg.get("denorm_from_neg1_pos1", None)
+    if denorm_from_neg1_pos1 is None:
+        denorm_from_neg1_pos1 = data_scale_to_neg1_pos1
+    else:
+        denorm_from_neg1_pos1 = bool(denorm_from_neg1_pos1)
+
     # Caso richiesto: inferenza raggruppata per classe (da Excel), senza split train/val/test
     if isinstance(loaders, dict):
         by_class_root = str(project_root / icfg.get("save_dir_by_class_root", "Model_Results_1/by_class"))
@@ -65,6 +75,7 @@ def run(cfg: Dict[str, Any], project_root: Path) -> None:
                 gif_fps=int(icfg["gif_fps"]),
                 mean=icfg.get("mean", None),
                 std=icfg.get("std", None),
+                scale_to_neg1_pos1=denorm_from_neg1_pos1,
                 checkpoint_path=resolved_ckpt,
                 save_images=bool(icfg["save_images"]),
                 save_gifs=bool(icfg["save_gifs"]),
@@ -84,6 +95,7 @@ def run(cfg: Dict[str, Any], project_root: Path) -> None:
             gif_fps=int(icfg["gif_fps"]),
             mean=icfg.get("mean", None),
             std=icfg.get("std", None),
+            scale_to_neg1_pos1=denorm_from_neg1_pos1,
             checkpoint_path=resolved_ckpt,
             save_images=bool(icfg["save_images"]),
             save_gifs=bool(icfg["save_gifs"]),
@@ -100,6 +112,7 @@ def run(cfg: Dict[str, Any], project_root: Path) -> None:
             gif_fps=int(icfg["gif_fps"]),
             mean=icfg.get("mean", None),
             std=icfg.get("std", None),
+            scale_to_neg1_pos1=denorm_from_neg1_pos1,
             checkpoint_path=resolved_ckpt,
             save_images=bool(icfg["save_images"]),
             save_gifs=bool(icfg["save_gifs"]),
@@ -116,6 +129,7 @@ def run(cfg: Dict[str, Any], project_root: Path) -> None:
             gif_fps=int(icfg["gif_fps"]),
             mean=icfg.get("mean", None),
             std=icfg.get("std", None),
+            scale_to_neg1_pos1=denorm_from_neg1_pos1,
             checkpoint_path=resolved_ckpt,
             save_images=bool(icfg["save_images"]),
             save_gifs=bool(icfg["save_gifs"]),

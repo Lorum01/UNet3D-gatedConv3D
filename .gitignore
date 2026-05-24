@@ -220,5 +220,5 @@ Dataset/
 *.jpeg
 
 Checkpoints/
-Model_Results_1/
+Model_Results_*/
 ~$EventsEtnaCLASS_Final.xlsx

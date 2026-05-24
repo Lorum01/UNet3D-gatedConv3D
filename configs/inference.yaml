@@ -43,6 +43,9 @@ infer:
   gif_fps: 2
   mean: null
   std: null
+  # Se true e mean/std sono null: applica l'inversa [-1,1]->[0,1] per le visualizzazioni.
+  # Se omesso/null: segue automaticamente data.scale_to_neg1_pos1 (comportamento legacy).
+  denorm_from_neg1_pos1: true
   save_images: true
   save_gifs: true
   show_plots: false

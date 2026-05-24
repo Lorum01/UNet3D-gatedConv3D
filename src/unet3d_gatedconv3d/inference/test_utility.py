@@ -21,9 +21,21 @@ def to_device(x, device: torch.device):
 
 def build_denorm(mean: Optional[Sequence[float]],
                  std: Optional[Sequence[float]],
-                 device: torch.device):
-    """Return a function that denormalizes a (B,C,T,H,W) tensor to [0,1]."""
+                 device: torch.device,
+                 scale_to_neg1_pos1: bool = False):
+    """Return a function that maps a (B,C,T,H,W) tensor to [0,1] for visualization.
+
+    Cases:
+    - If `mean`/`std` are provided: inverse standardization `x*std + mean`, then clamp.
+    - Else if `scale_to_neg1_pos1=True`: inverse scaling from [-1,1] to [0,1] via `(x+1)/2`, then clamp.
+    - Else: assume already in [0,1] and just clamp.
+    """
     if mean is None or std is None:
+        if scale_to_neg1_pos1:
+            def _unscale(x: torch.Tensor) -> torch.Tensor:
+                return ((x + 1.0) * 0.5).clamp(0, 1)
+            return _unscale
+
         def _iden(x: torch.Tensor) -> torch.Tensor:
             return x.clamp(0, 1)
         return _iden
@@ -77,6 +89,7 @@ def test_model_create_gifs_3ch(
     gif_fps: int = 2,
     mean: Optional[Sequence[float]] = None,
     std: Optional[Sequence[float]] = None,
+    scale_to_neg1_pos1: bool = False,
     checkpoint_path: Optional[str] = "convUnet_Best_Test_mod_1/best_model.pth",
     save_images: bool = True,
     save_gifs: bool = True,
@@ -110,6 +123,9 @@ def test_model_create_gifs_3ch(
         FPS per le GIF animate.
     mean, std : Optional[Sequence[float]]
         Statistiche per la denormalizzazione (per canali). Se None, clamp in [0,1].
+    scale_to_neg1_pos1 : bool
+        Se True e mean/std sono None, applica l'inversa della mappatura [0,1]->[-1,1] (cioè [-1,1]->[0,1])
+        prima di clippare per la visualizzazione.
     checkpoint_path : str | None
         Percorso al checkpoint del modello; se None, non carica pesi.
     save_images : bool
@@ -148,7 +164,7 @@ def test_model_create_gifs_3ch(
             model.load_state_dict(state, strict=False)
     model.eval()
 
-    denorm = build_denorm(mean, std, device)
+    denorm = build_denorm(mean, std, device, scale_to_neg1_pos1=scale_to_neg1_pos1)
 
     # --------------------------- Main Loop ---------------------------
     batch_count = 0

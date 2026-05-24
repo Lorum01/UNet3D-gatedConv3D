@@ -77,6 +77,9 @@ def _defaults() -> Dict[str, Any]:
             "gif_fps": 2,
             "mean": None,
             "std": None,
+            # If set, overrides data.scale_to_neg1_pos1 for visualization denorm.
+            # None keeps backward-compatible behavior (follow data.scale_to_neg1_pos1).
+            "denorm_from_neg1_pos1": None,
             "save_images": True,
             "save_gifs": True,
             "show_plots": False,

@@ -9,9 +9,14 @@ From this folder (`cleaned-repo`):
 - Train:
   - `python scripts/run.py --config configs/train.yaml`
 - Inference (with train/val/test split):
-  - `python scripts/run.py --config configs/infer.yaml`
+  - `python scripts/run.py --config configs/inference.yaml`
 - Inference "by class" (group by class, no split):
-  - `python scripts/run.py --config configs/infer_by_class.yaml`
+  - `python scripts/run.py --config configs/inference_by_class.yaml`
+
+When running inference, the runner also saves in the results folder:
+- the console output log (`run_YYYYMMDD-HHMMSS.log`)
+- the config file passed via `--config` (copied as-is)
+- the resolved/merged config actually used (`config_resolved.yaml`)
 
 ## Dataset layout (`Dataset/`)
 

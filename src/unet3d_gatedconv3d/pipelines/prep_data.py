@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from typing import Any, Dict, Tuple
+from typing import Any, Dict
 
 import numpy as np
 from torch.utils.data import DataLoader, Subset
@@ -16,16 +16,14 @@ from ..data.dataloader import (
     CustomDataset,
     pct_to_counts,
     split_by_class_distribution,
-    compute_mean_std,
     report_split_coverage,
     check_dataset_range,
     custom_collate_fn,
 )
 
 
-def _build_sequences(cfg: Dict[str, Any]):
+def _load_events(cfg: Dict[str, Any]):
     paths = cfg["paths"]
-    dcfg = cfg["data"]
 
     dataset_folder = paths["dataset_folder"]
     excel_path = paths["excel_path"]
@@ -38,17 +36,27 @@ def _build_sequences(cfg: Dict[str, Any]):
 
     # 2) Classi da Excel
     event_class_dict = load_event_classes_from_excel(excel_path)
-    all_classes = [event_class_dict[i] for i, _ in enumerate(all_series)]
+    event_labels = [event_class_dict[i] for i, _ in enumerate(all_series)]
 
-    class_counts = Counter(all_classes)
+    class_counts = Counter(event_labels)
     print("Numero totale serie per ogni classe:")
     for classe, count in class_counts.items():
         print(f"{classe}: {count}")
 
-    # 3) Sequenze (con filenames)
+    return all_series, all_series_filenames, event_labels
+
+
+def _build_sequences_from_events(
+    *,
+    all_series,
+    all_series_filenames,
+    event_labels,
+    dcfg: Dict[str, Any],
+):
+    # 3) Sequenze (con filenames) - labels a livello sequenza = classe dell'evento sorgente
     result = create_sequences_multiple_series_fixed_input(
         all_series=all_series,
-        all_classes=all_classes,
+        all_classes=event_labels,
         input_length=int(dcfg["input_length"]),
         prediction_length=int(dcfg["prediction_length"]),
         stride=int(dcfg["stride"]),
@@ -86,19 +94,27 @@ def build_dataloaders(cfg: Dict[str, Any]):
     lcfg = cfg.get("dataloader", {})
 
     split_strategy = str(dcfg.get("split_strategy", "train_val_test")).strip().lower()
-    all_inputs_list, all_targets_list, labels, input_fnames, target_fnames = _build_sequences(cfg)
-
-    # Dataset completo (come notebook: scaling opzionale + filenames)
-    full_dataset = CustomDataset(
-        all_inputs_list,
-        all_targets_list,
-        labels,
-        scale_to_neg1_pos1=bool(dcfg.get("scale_to_neg1_pos1", True)),
-        input_filenames=input_fnames,
-        target_filenames=target_fnames,
-    )
+    scale_to_neg1_pos1 = bool(dcfg.get("scale_to_neg1_pos1", True))
+    all_series, all_series_filenames, event_labels = _load_events(cfg)
 
     if split_strategy == "by_class":
+        all_inputs_list, all_targets_list, labels, input_fnames, target_fnames = _build_sequences_from_events(
+            all_series=all_series,
+            all_series_filenames=all_series_filenames,
+            event_labels=event_labels,
+            dcfg=dcfg,
+        )
+
+        # Dataset completo (come notebook: scaling opzionale + filenames)
+        full_dataset = CustomDataset(
+            all_inputs_list,
+            all_targets_list,
+            labels,
+            scale_to_neg1_pos1=scale_to_neg1_pos1,
+            input_filenames=input_fnames,
+            target_filenames=target_fnames,
+        )
+
         # Nessuno split train/val/test: crea subset per classe dall'Excel
         unique_classes = sorted(set(int(x) for x in labels.tolist()))
         loaders_by_class = {}
@@ -117,47 +133,100 @@ def build_dataloaders(cfg: Dict[str, Any]):
         raise ValueError(f"Unsupported data.split_strategy={split_strategy!r}. Use 'train_val_test' or 'by_class'.")
 
     # ---- split train/val/test (default) ----
-    temp_dataset = CustomDataset(all_inputs_list, all_targets_list, labels)
-
-    # 6) Split per classe (percentuali)
+    # Split a livello EVENTO per evitare leakage (finestre dello stesso evento in split diversi).
     if bool(dcfg.get("use_percent_distribution", True)):
-        class_distribution = pct_to_counts(dcfg["class_pct"], labels, round_method="round")
+        class_distribution = pct_to_counts(dcfg["class_pct"], event_labels, round_method="round")
     else:
         raise ValueError("use_percent_distribution=false non è supportato in questa versione (manca CLASS_DISTRIBUTION).")
 
     seed = int(dcfg.get("split_seed", 424))
-    train_idx, val_idx, test_idx = split_by_class_distribution(labels, class_distribution, shuffle=True, seed=seed)
-    print("Class distribution used for split:", class_distribution)
+    train_event_idx, val_event_idx, test_event_idx = split_by_class_distribution(
+        event_labels, class_distribution, shuffle=True, seed=seed
+    )
+    print("Class distribution used for EVENT split:", class_distribution)
+    report_split_coverage(train_event_idx, val_event_idx, test_event_idx, total_len=len(event_labels))
+    # Sanity: nessuna sovrapposizione fra eventi dei vari split
+    overlap_tv = set(train_event_idx).intersection(val_event_idx)
+    overlap_tt = set(train_event_idx).intersection(test_event_idx)
+    overlap_vt = set(val_event_idx).intersection(test_event_idx)
+    if overlap_tv or overlap_tt or overlap_vt:
+        print(f"[ATTENZIONE] Overlap eventi fra split: train∩val={len(overlap_tv)}, train∩test={len(overlap_tt)}, val∩test={len(overlap_vt)}")
+    print(f"Eventi per split: train={len(train_event_idx)} val={len(val_event_idx)} test={len(test_event_idx)}")
 
-    mean_c, std_c = compute_mean_std(temp_dataset, train_idx)
-    print("Mean canali:", mean_c)
-    print("Std  canali:", std_c)
+    def _select_events(indices):
+        sel_series = [all_series[i] for i in indices]
+        sel_fnames = [all_series_filenames[i] for i in indices]
+        sel_labels = [event_labels[i] for i in indices]
+        return sel_series, sel_fnames, sel_labels
 
-    report_split_coverage(train_idx, val_idx, test_idx, total_len=len(full_dataset))
+    tr_series, tr_fnames, tr_labels = _select_events(train_event_idx)
+    va_series, va_fnames, va_labels = _select_events(val_event_idx)
+    te_series, te_fnames, te_labels = _select_events(test_event_idx)
 
-    train_subset = Subset(full_dataset, train_idx)
-    val_subset = Subset(full_dataset, val_idx)
-    test_subset = Subset(full_dataset, test_idx)
+    tr_inputs, tr_targets, tr_y, tr_in_fn, tr_tg_fn = _build_sequences_from_events(
+        all_series=tr_series,
+        all_series_filenames=tr_fnames,
+        event_labels=tr_labels,
+        dcfg=dcfg,
+    )
+    va_inputs, va_targets, va_y, va_in_fn, va_tg_fn = _build_sequences_from_events(
+        all_series=va_series,
+        all_series_filenames=va_fnames,
+        event_labels=va_labels,
+        dcfg=dcfg,
+    )
+    te_inputs, te_targets, te_y, te_in_fn, te_tg_fn = _build_sequences_from_events(
+        all_series=te_series,
+        all_series_filenames=te_fnames,
+        event_labels=te_labels,
+        dcfg=dcfg,
+    )
+
+    train_dataset = CustomDataset(
+        tr_inputs,
+        tr_targets,
+        tr_y,
+        scale_to_neg1_pos1=scale_to_neg1_pos1,
+        input_filenames=tr_in_fn,
+        target_filenames=tr_tg_fn,
+    )
+    val_dataset = CustomDataset(
+        va_inputs,
+        va_targets,
+        va_y,
+        scale_to_neg1_pos1=scale_to_neg1_pos1,
+        input_filenames=va_in_fn,
+        target_filenames=va_tg_fn,
+    )
+    test_dataset = CustomDataset(
+        te_inputs,
+        te_targets,
+        te_y,
+        scale_to_neg1_pos1=scale_to_neg1_pos1,
+        input_filenames=te_in_fn,
+        target_filenames=te_tg_fn,
+    )
 
     train_loader = DataLoader(
-        train_subset,
+        train_dataset,
         batch_size=int(lcfg["batch_size_train"]),
         shuffle=True,
         collate_fn=custom_collate_fn,
     )
     val_loader = DataLoader(
-        val_subset,
+        val_dataset,
         batch_size=int(lcfg["batch_size_val"]),
         shuffle=False,
         collate_fn=custom_collate_fn,
     )
     test_loader = DataLoader(
-        test_subset,
+        test_dataset,
         batch_size=int(lcfg["batch_size_test"]),
         shuffle=False,
         collate_fn=custom_collate_fn,
     )
 
-    check_dataset_range(full_dataset, standardized=True)
+    check_dataset_range(train_dataset, standardized=True)
+    check_dataset_range(val_dataset, standardized=True)
+    check_dataset_range(test_dataset, standardized=True)
     return train_loader, val_loader, test_loader
-

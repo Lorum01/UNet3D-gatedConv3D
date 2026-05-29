@@ -32,7 +32,7 @@ infer:
   checkpoint_path: "./Checkpoints/convUnet_Best_Test_mod_1/best_model.pth"
 
   # Root output: `Model_Results_1/by_class/class_<id>/...`
-  save_dir_by_class_root: "Model_Results_7/by_class"
+  save_dir_by_class_root: "Model_Results_8/by_class"
 
   max_batches: 10
   gif_fps: 2
@@ -40,7 +40,7 @@ infer:
   std: null
   # Se true e mean/std sono null: applica l'inversa [-1,1]->[0,1] per le visualizzazioni.
   # Se omesso/null: segue automaticamente data.scale_to_neg1_pos1 (comportamento legacy).
-  denorm_from_neg1_pos1: false #se false fa il clamp a [0,1] invece di denormalizzare da [-1,1]
+  denorm_from_neg1_pos1: true #se false fa il clamp a [0,1] invece di denormalizzare da [-1,1]
   save_images: true
   save_gifs: true
   show_plots: false

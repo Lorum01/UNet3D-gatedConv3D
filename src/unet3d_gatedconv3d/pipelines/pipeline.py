@@ -17,7 +17,13 @@ def run(cfg: Dict[str, Any], project_root: Path) -> None:
 
     loaders = build_dataloaders(cfg)
     model = build_model(cfg["model"])
-    data_scale_to_neg1_pos1 = bool((cfg.get("data") or {}).get("scale_to_neg1_pos1", True))
+    dcfg = cfg.get("data") or {}
+    normalization = dcfg.get("normalization", None)
+    if normalization is None:
+        data_scale_to_neg1_pos1 = bool(dcfg.get("scale_to_neg1_pos1", True))
+    else:
+        normalization = str(normalization).strip().lower()
+        data_scale_to_neg1_pos1 = normalization == "neg1pos1"
 
     if mode == "train":
         if isinstance(loaders, dict):

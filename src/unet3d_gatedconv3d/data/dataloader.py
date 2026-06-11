@@ -111,24 +111,43 @@ def split_by_class_distribution(labels, class_distribution, shuffle=True, seed=N
 
 def compute_mean_std(dataset, indices):
     """
-    Calcola media e std dei canali (3) sui soli campioni 'indices'.
+    Calcola media e std per canale sui soli campioni 'indices'.
+
+    Atteso: `dataset[i]` ritorna `data` con shape (T, C, H, W).
+    La media/std vengono calcolate sui pixel aggregando sugli assi (T, H, W).
     """
-    sum_c    = np.zeros(3, dtype=np.float64)
-    sum_sq_c = np.zeros(3, dtype=np.float64)
+    sum_c = None
+    sum_sq_c = None
     total_pixels = 0
 
     for i in indices:
         data, _, _, _ = dataset[i]  # data = (T, C, H, W)
-        data_np = data.numpy()
-        C   = data_np.shape[1]
-        THW = data_np.shape[0] * data_np.shape[2] * data_np.shape[3]
-        data_reshaped = data_np.reshape(C, THW)
-        sum_c    += data_reshaped.sum(axis=1)
-        sum_sq_c += (data_reshaped**2).sum(axis=1)
-        total_pixels += THW
+        if not isinstance(data, torch.Tensor):
+            data = torch.as_tensor(data)
+
+        if data.ndim != 4:
+            raise ValueError(f"compute_mean_std: expected data shape (T,C,H,W), got {tuple(data.shape)}")
+
+        # Accumulo in float64 per stabilità numerica
+        data_d = data.to(dtype=torch.float64)
+        # Somma per canale su (T,H,W) -> (C,)
+        s = data_d.sum(dim=(0, 2, 3)).cpu().numpy()
+        ss = (data_d * data_d).sum(dim=(0, 2, 3)).cpu().numpy()
+
+        if sum_c is None:
+            sum_c = np.zeros_like(s, dtype=np.float64)
+            sum_sq_c = np.zeros_like(ss, dtype=np.float64)
+
+        sum_c += s
+        sum_sq_c += ss
+        total_pixels += int(data_d.shape[0] * data_d.shape[2] * data_d.shape[3])
+
+    if total_pixels <= 0 or sum_c is None or sum_sq_c is None:
+        raise ValueError("compute_mean_std: no pixels to aggregate (empty indices?)")
 
     mean = sum_c / total_pixels
     var  = (sum_sq_c / total_pixels) - (mean**2)
+    var = np.maximum(var, 0.0)  # robustezza numerica
     std  = np.sqrt(var)
     return mean, std
 

@@ -28,6 +28,12 @@ def _defaults() -> Dict[str, Any]:
             "prediction_length": 4,
             "stride": 1,
             "expected_input_shape": [4, 100, 100, 3],
+            # Normalization strategy for dataset values:
+            # - "none": no transform (assumes inputs already in desired range)
+            # - "neg1pos1": map [0,1] -> [-1,1]
+            # - "standardize": (x - mean) / std with mean/std computed on train split
+            # If omitted, legacy behavior follows `scale_to_neg1_pos1`.
+            "normalization": None,
             "scale_to_neg1_pos1": True,
             "use_percent_distribution": True,
             "class_pct": {

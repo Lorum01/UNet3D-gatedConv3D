@@ -51,7 +51,11 @@ These rules come from `src/unet3d_gatedconv3d/data/input_utility.py`.
   - each frame is resized to **100x100** during loading;
   - the pipeline is configured to work with **3 channels** (config `expected_input_shape: [..., 3]` and model `unet_in_channels: 3`), so in practice you should store frames with shape **`(H, W, 3)`**.
 - **Value range:** values are expected to be in **[0, 1]** before preprocessing.
-  - If `data.scale_to_neg1_pos1: true` in the config, values are mapped to **[-1, 1]**.
+  - Recommended: use `data.normalization` to select preprocessing:
+    - `none`: no transform
+    - `neg1pos1`: map **[0,1] -> [-1,1]**
+    - `standardize`: apply **(x - mean) / std** (mean/std computed on train split)
+  - Backward-compatible behavior: if `data.normalization` is omitted/null, the code follows `data.scale_to_neg1_pos1` (legacy).
 - **Minimum sequence length per event:** to generate at least one valid sequence, each event must have at least:
   - `T >= input_length + prediction_length`
   - and sequences are extracted with a sliding window with step `stride`.
@@ -83,3 +87,25 @@ Tip: you can add extra columns (e.g. `EventName`) to document the mapping, but a
 
 - Dataset and Excel paths are configurable in the YAML files under `configs/`.
 - In inference you can choose which splits to run (test/val/train) via `infer.run_*` (config `infer.yaml`).
+
+## Normalization & visualization (`data.normalization` vs `infer.denorm_from_neg1_pos1`)
+
+There are two separate concerns:
+
+- `data.normalization` controls what the **model receives** (done inside the dataset).
+- `infer.denorm_from_neg1_pos1` (and `infer.mean/std`) control how outputs are **mapped back to [0,1] for saving/plotting**.
+
+### Recommended combinations
+
+| `data.normalization` | Dataset output range | What to set in inference for correct visualization |
+|---|---|---|
+| `none` | whatever your `.npy` contains (typically `[0,1]`) | `infer.denorm_from_neg1_pos1: false` (or omit) and keep `infer.mean/std: null` |
+| `neg1pos1` | `[-1,1]` | `infer.denorm_from_neg1_pos1: true` (and keep `infer.mean/std: null`) |
+| `standardize` | standardized (unbounded) | set `infer.mean` and `infer.std` (train stats) and set `infer.denorm_from_neg1_pos1: false` |
+
+### Notes / caveats
+
+- For `data.normalization: standardize`:
+  - in `split_strategy: train_val_test`, mean/std are computed on the **train split** and applied to train/val/test;
+  - in `split_strategy: by_class`, there is no train split, so you must provide the statistics in the config (currently `data.mean` and `data.std` are required by the loader logic).
+- `infer.denorm_from_neg1_pos1` is meaningful only when the dataset uses `neg1pos1`; for `standardize`, visualization should use `infer.mean/std` instead.

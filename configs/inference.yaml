@@ -9,6 +9,8 @@ data:
   prediction_length: 4
   stride: 1
   expected_input_shape: [4, 100, 100, 3]
+  # Normalization strategy: "none" | "neg1pos1" | "standardize"
+  normalization: "neg1pos1"
   scale_to_neg1_pos1: true
   use_percent_distribution: true
   class_pct:

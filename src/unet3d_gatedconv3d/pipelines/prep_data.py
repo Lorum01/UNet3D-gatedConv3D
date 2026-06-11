@@ -16,6 +16,7 @@ from ..data.dataloader import (
     CustomDataset,
     pct_to_counts,
     split_by_class_distribution,
+    compute_mean_std,
     report_split_coverage,
     check_dataset_range,
     custom_collate_fn,
@@ -94,7 +95,15 @@ def build_dataloaders(cfg: Dict[str, Any]):
     lcfg = cfg.get("dataloader", {})
 
     split_strategy = str(dcfg.get("split_strategy", "train_val_test")).strip().lower()
-    scale_to_neg1_pos1 = bool(dcfg.get("scale_to_neg1_pos1", True))
+    normalization = dcfg.get("normalization", None)
+    if normalization is None:
+        # Legacy behavior: follow `scale_to_neg1_pos1`
+        normalization = "neg1pos1" if bool(dcfg.get("scale_to_neg1_pos1", True)) else "none"
+    normalization = str(normalization).strip().lower()
+    if normalization not in {"none", "neg1pos1", "standardize"}:
+        raise ValueError(f"Unsupported data.normalization={normalization!r}. Use 'none'|'neg1pos1'|'standardize'.")
+
+    scale_to_neg1_pos1 = normalization == "neg1pos1"
     all_series, all_series_filenames, event_labels = _load_events(cfg)
 
     if split_strategy == "by_class":
@@ -105,11 +114,20 @@ def build_dataloaders(cfg: Dict[str, Any]):
             dcfg=dcfg,
         )
 
+        mean_c = std_c = None
+        if normalization == "standardize":
+            mean_c = dcfg.get("mean", None)
+            std_c = dcfg.get("std", None)
+            if mean_c is None or std_c is None:
+                raise ValueError("data.normalization='standardize' with split_strategy='by_class' requires data.mean and data.std in config.")
+
         # Dataset completo (come notebook: scaling opzionale + filenames)
         full_dataset = CustomDataset(
             all_inputs_list,
             all_targets_list,
             labels,
+            mean=mean_c,
+            std=std_c,
             scale_to_neg1_pos1=scale_to_neg1_pos1,
             input_filenames=input_fnames,
             target_filenames=target_fnames,
@@ -182,10 +200,20 @@ def build_dataloaders(cfg: Dict[str, Any]):
         dcfg=dcfg,
     )
 
+    mean_c = std_c = None
+    if normalization == "standardize":
+        # Calcola mean/std SOLO sul TRAIN (senza trasformazioni) e riusa su val/test.
+        temp_train = CustomDataset(tr_inputs, tr_targets, tr_y, scale_to_neg1_pos1=False)
+        mean_c, std_c = compute_mean_std(temp_train, range(len(temp_train)))
+        print("Mean canali (train):", mean_c)
+        print("Std  canali (train):", std_c)
+
     train_dataset = CustomDataset(
         tr_inputs,
         tr_targets,
         tr_y,
+        mean=mean_c,
+        std=std_c,
         scale_to_neg1_pos1=scale_to_neg1_pos1,
         input_filenames=tr_in_fn,
         target_filenames=tr_tg_fn,
@@ -194,6 +222,8 @@ def build_dataloaders(cfg: Dict[str, Any]):
         va_inputs,
         va_targets,
         va_y,
+        mean=mean_c,
+        std=std_c,
         scale_to_neg1_pos1=scale_to_neg1_pos1,
         input_filenames=va_in_fn,
         target_filenames=va_tg_fn,
@@ -202,6 +232,8 @@ def build_dataloaders(cfg: Dict[str, Any]):
         te_inputs,
         te_targets,
         te_y,
+        mean=mean_c,
+        std=std_c,
         scale_to_neg1_pos1=scale_to_neg1_pos1,
         input_filenames=te_in_fn,
         target_filenames=te_tg_fn,

@@ -71,12 +71,16 @@ def frames_to_gif(frames_chw: List[np.ndarray], gif_path: str, fps: int) -> None
     imageio.mimsave(gif_path, frames_rgb, duration=duration)
 
 
-def permute_to_bcthw(x: torch.Tensor) -> torch.Tensor:
-    """Ensure shape is (B, C, T, H, W). If already so, return as-is."""
+def ensure_bcthw(x: torch.Tensor, *, expected_channels: int = 3, name: str = "tensor") -> torch.Tensor:
+    """Validate that a tensor is already in (B, C, T, H, W) format."""
     if x.dim() != 5:
-        raise ValueError(f"Expected 5D tensor (B,*,*,*,*), got shape {tuple(x.shape)}")
-    # if channels are not on dim=1, assume (B, T, C, H, W) and permute
-    return x if x.shape[1] in (1, 3) else x.permute(0, 2, 1, 3, 4)
+        raise ValueError(f"Expected 5D {name} tensor (B,C,T,H,W), got shape {tuple(x.shape)}")
+    if x.shape[1] != expected_channels:
+        raise ValueError(
+            f"Expected {name} channels on dim=1 to be {expected_channels}; "
+            f"got shape {tuple(x.shape)}. The DataLoader should return (B,C,T,H,W)."
+        )
+    return x
 
 #Test autoregressivo 2-step (4 in -> 4 out, poi 2-step autoregressivo) con salvataggio immagini e GIF.
 
@@ -183,9 +187,8 @@ def test_model_create_gifs_3ch(
                 labels = [None] * data.shape[0]
                 input_fnames_batch = target_fnames_batch = None
 
-            # Porta a (B,3,T,H,W)
-            data = permute_to_bcthw(data)
-            targets = permute_to_bcthw(targets)
+            data = ensure_bcthw(data, expected_channels=3, name="data")
+            targets = ensure_bcthw(targets, expected_channels=3, name="targets")
 
             data = to_device(data, device)
             targets = to_device(targets, device)

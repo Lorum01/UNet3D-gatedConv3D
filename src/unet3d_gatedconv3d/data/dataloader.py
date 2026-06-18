@@ -41,8 +41,8 @@ class CustomDataset(Dataset):
         self.scale_to_neg1_pos1 = scale_to_neg1_pos1
 
         if mean is not None and std is not None:
-            self.mean = torch.tensor(mean, dtype=torch.float32).view(1, -1, 1, 1)
-            self.std  = torch.tensor(std,  dtype=torch.float32).view(1, -1, 1, 1)
+            self.mean = torch.tensor(mean, dtype=torch.float32).view(-1, 1, 1, 1)
+            self.std  = torch.tensor(std,  dtype=torch.float32).view(-1, 1, 1, 1)
 
         print(f"Dataset creato con {len(self.labels)} campioni totali.")
 
@@ -57,9 +57,9 @@ class CustomDataset(Dataset):
         input_fnames  = self.input_fnames[idx]  if self.input_fnames  is not None else None
         target_fnames = self.target_fnames[idx] if self.target_fnames is not None else None
 
-        # (T, C, H, W)
-        data   = data.permute(0, 3, 1, 2)
-        target = target.permute(0, 3, 1, 2)
+        # (C, T, H, W) - channel-first layout expected by Conv3d after batching.
+        data   = data.permute(3, 0, 1, 2)
+        target = target.permute(3, 0, 1, 2)
 
         # 1) scaling [-1,1] se richiesto
         if self.scale_to_neg1_pos1:
@@ -113,7 +113,7 @@ def compute_mean_std(dataset, indices):
     """
     Calcola media e std per canale sui soli campioni 'indices'.
 
-    Atteso: `dataset[i]` ritorna `data` con shape (T, C, H, W).
+    Atteso: `dataset[i]` ritorna `data` con shape (C, T, H, W).
     La media/std vengono calcolate sui pixel aggregando sugli assi (T, H, W).
     """
     sum_c = None
@@ -121,18 +121,18 @@ def compute_mean_std(dataset, indices):
     total_pixels = 0
 
     for i in indices:
-        data, _, _, _ = dataset[i]  # data = (T, C, H, W)
+        data, _, _, _ = dataset[i]  # data = (C, T, H, W)
         if not isinstance(data, torch.Tensor):
             data = torch.as_tensor(data)
 
         if data.ndim != 4:
-            raise ValueError(f"compute_mean_std: expected data shape (T,C,H,W), got {tuple(data.shape)}")
+            raise ValueError(f"compute_mean_std: expected data shape (C,T,H,W), got {tuple(data.shape)}")
 
         # Accumulo in float64 per stabilità numerica
         data_d = data.to(dtype=torch.float64)
         # Somma per canale su (T,H,W) -> (C,)
-        s = data_d.sum(dim=(0, 2, 3)).cpu().numpy()
-        ss = (data_d * data_d).sum(dim=(0, 2, 3)).cpu().numpy()
+        s = data_d.sum(dim=(1, 2, 3)).cpu().numpy()
+        ss = (data_d * data_d).sum(dim=(1, 2, 3)).cpu().numpy()
 
         if sum_c is None:
             sum_c = np.zeros_like(s, dtype=np.float64)
@@ -140,7 +140,7 @@ def compute_mean_std(dataset, indices):
 
         sum_c += s
         sum_sq_c += ss
-        total_pixels += int(data_d.shape[0] * data_d.shape[2] * data_d.shape[3])
+        total_pixels += int(data_d.shape[1] * data_d.shape[2] * data_d.shape[3])
 
     if total_pixels <= 0 or sum_c is None or sum_sq_c is None:
         raise ValueError("compute_mean_std: no pixels to aggregate (empty indices?)")
@@ -156,9 +156,10 @@ def display_batch_details(dataloader):
     """
     Stampa per ogni batch: lunghezze input/target e labels.
     """
-    for batch_idx, (inputs, targets, lbls) in enumerate(dataloader):
-        input_lengths  = [inp.shape[0] for inp in inputs]
-        target_lengths = [tar.shape[0] for tar in targets]
+    for batch_idx, batch in enumerate(dataloader):
+        inputs, targets, lbls = batch[:3]
+        input_lengths  = [inp.shape[1] for inp in inputs]
+        target_lengths = [tar.shape[1] for tar in targets]
         labels_list    = lbls.tolist()
         print(f"Batch {batch_idx + 1}:")
         print(f"  Input lengths:  {input_lengths}")
@@ -178,11 +179,11 @@ def show_images_from_batch(
 ):
     """
     Mostra i frame di input (prima riga) e target (seconda riga) per al più 'max_samples'.
-    data.shape = (B, T, C, H, W)
+    data.shape = (B, C, T, H, W)
     """
     batch_size = data.size(0)
-    time_steps = data.size(1)
-    pred_steps = targets.size(1)
+    time_steps = data.size(2)
+    pred_steps = targets.size(2)
     num_samples = min(max_samples, batch_size)
     
     for i in range(num_samples):
@@ -199,7 +200,7 @@ def show_images_from_batch(
         # INPUT
         for t in range(n_cols):
             if t < time_steps:
-                frame_in = data[i, t].permute(1, 2, 0).cpu().numpy()
+                frame_in = data[i, :, t].permute(1, 2, 0).cpu().numpy()
                 if mean is not None and std is not None:
                     frame_in = frame_in * std.reshape(1, 1, -1) + mean.reshape(1, 1, -1)
                 frame_in = np.clip(frame_in, 0, 1)
@@ -215,7 +216,7 @@ def show_images_from_batch(
         # TARGET
         for t in range(n_cols):
             if t < pred_steps:
-                frame_out = targets[i, t].permute(1, 2, 0).cpu().numpy()
+                frame_out = targets[i, :, t].permute(1, 2, 0).cpu().numpy()
                 if mean is not None and std is not None:
                     frame_out = frame_out * std.reshape(1, 1, -1) + mean.reshape(1, 1, -1)
                 frame_out = np.clip(frame_out, 0, 1)
@@ -272,8 +273,8 @@ def custom_collate_fn(batch):
         input_fnames_list.append(inf)
         target_fnames_list.append(tf)
 
-    data_tensor   = torch.stack(data_list, dim=0)    # (B, T, C, H, W)
-    target_tensor = torch.stack(target_list, dim=0)  # (B, T, C, H, W)
+    data_tensor   = torch.stack(data_list, dim=0)    # (B, C, T, H, W)
+    target_tensor = torch.stack(target_list, dim=0)  # (B, C, T_pred, H, W)
     labels_tensor = torch.stack(labels_list, dim=0)  # (B,)
     return data_tensor, target_tensor, labels_tensor, (input_fnames_list, target_fnames_list)
 

@@ -20,8 +20,8 @@ def split_batch(batch):
 def train_one_epoch_3d(model, dataloader, optimizer, device="cuda", alpha=0.5): 
     """
     Esegue una epoca di training su modello 3D.
-    Input batch:  (B, T, C, H, W)
-    Input modello: (B, C, T, H, W) -> quindi permuta.
+    Input batch:  (B, C, T, H, W)
+    Input modello: (B, C, T, H, W).
     Loss: weighted_mse_lpips_loss(outputs, targets, alpha).
     """
     model.train()
@@ -31,9 +31,8 @@ def train_one_epoch_3d(model, dataloader, optimizer, device="cuda", alpha=0.5):
     for batch in dataloader:
         data, targets, _, _ = split_batch(batch)
 
-        # Adatta al layout atteso dal modello: (B, T, C, H, W) -> (B, C, T, H, W)
-        data = data.permute(0, 2, 1, 3, 4).to(device)
-        targets = targets.permute(0, 2, 1, 3, 4).to(device)
+        data = data.to(device)
+        targets = targets.to(device)
 
         optimizer.zero_grad()
         outputs = model(data)  # (B, C, T, H, W)
@@ -64,9 +63,8 @@ def evaluate_model_3d(model, dataloader, device="cuda", alpha=0.5):
     for batch in dataloader:
         data, targets, _, _ = split_batch(batch)
         
-        # Stessa permuta del training
-        data = data.permute(0, 2, 1, 3, 4).to(device)
-        targets = targets.permute(0, 2, 1, 3, 4).to(device)
+        data = data.to(device)
+        targets = targets.to(device)
 
         outputs = model(data)
         loss = weighted_mse_lpips_loss(outputs, targets, alpha=alpha)

@@ -35,7 +35,7 @@ infer:
   checkpoint_path: "./Checkpoints/convUnet_Best_Test_mod_1/best_model.pth"
 
   # Root output: `Model_Results_1/by_class/class_<id>/...`
-  save_dir_by_class_root: "Model_Results_8/by_class"
+  save_dir_by_class_root: "Model_Results_9/by_class"
 
   max_batches: 10
   gif_fps: 2

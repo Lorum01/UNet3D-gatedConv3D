@@ -19,79 +19,113 @@ def _defaults() -> Dict[str, Any]:
     return {
         "mode": "train",
         "paths": {
-            "dataset_folder": "../Dataset",
+            "dataset_dir": "../Dataset",
             "excel_path": "../EventsEtnaCLASS_Final.xlsx",
         },
-        "data": {
-            "split_strategy": "train_val_test",  # "train_val_test" | "by_class"
+        "dataset": {
             "input_length": 4,
             "prediction_length": 4,
             "stride": 1,
-            "expected_input_shape": [4, 100, 100, 3],
-            # Normalization strategy for dataset values:
-            # - "none": no transform (assumes inputs already in desired range)
-            # - "neg1pos1": map [0,1] -> [-1,1]
-            # - "standardize": (x - mean) / std with mean/std computed on train split
-            # If omitted, legacy behavior follows `scale_to_neg1_pos1`.
-            "normalization": None,
-            "scale_to_neg1_pos1": True,
-            "use_percent_distribution": True,
-            "class_pct": {
-                1: {"train": 0.7, "val": 0.15, "test": 0.15},
-                2: {"train": 0.7, "val": 0.15, "test": 0.15},
-                3: {"train": 0.7, "val": 0.15, "test": 0.15},
-                4: {"train": 0.7, "val": 0.15, "test": 0.15},
+            "image_size": [100, 100],  # [H, W]
+            "channels": 3,
+            "normalization": {
+                # "none": no transform (assumes inputs already in desired range)
+                # "neg1pos1": map [0,1] -> [-1,1]
+                # "standardize": (x - mean) / std
+                #   - with split.strategy: train_val_test, mean/std are computed on the
+                #     train split automatically (the values below are ignored).
+                #   - with split.strategy: by_class, mean/std below are REQUIRED.
+                "mode": "neg1pos1",
+                "mean": None,
+                "std": None,
             },
-            "split_seed": 424,
+            "split": {
+                "strategy": "train_val_test",  # "train_val_test" | "by_class"
+                "seed": 424,
+                # Only used when strategy: train_val_test. Percentages per event class
+                # (as found in the `Class` column of the Excel file).
+                "class_percentages": {
+                    1: {"train": 0.7, "val": 0.15, "test": 0.15},
+                    2: {"train": 0.7, "val": 0.15, "test": 0.15},
+                    3: {"train": 0.7, "val": 0.15, "test": 0.15},
+                    4: {"train": 0.7, "val": 0.15, "test": 0.15},
+                },
+            },
         },
         "dataloader": {
-            "batch_size_train": 4,
-            "batch_size_val": 4,
-            "batch_size_test": 4,
+            "batch_size": {
+                "train": 4,
+                "val": 4,
+                "test": 4,
+            },
         },
         "model": {
-            "unet_in_channels": 3,
-            "unet_base_channels": 32,
-            "unet_num_levels": 5,
-            "unet_out_channels": 64,
-            "stackedconv_hidden_dims": [64, 128, 256, 512],
-            "stackedconv_kernel_size": 3,
-            "stackedconv_padding": 1,
+            "unet": {
+                "in_channels": 3,
+                "base_channels": 32,
+                "num_levels": 5,
+                "out_channels": 64,
+            },
+            "stacked_conv": {
+                "hidden_dims": [64, 128, 256, 512],
+                "kernel_size": 3,
+                "padding": 1,
+            },
             "final_out_channels": 3,
         },
         "train": {
             "device": "cuda",
             "num_epochs": 250,
             "lr": 1e-3,
-            "checkpoint_dir": "Checkpoints",
-            "checkpoint_interval": 10,
-            "patience_early_stopping": 80,
-            "patience_lr_scheduler": 12,
-            "lr_factor": 0.5,
-            "lr_threshold": 1e-4,
-            "alpha": 0.7,
+            # If True, wrap the model in nn.DataParallel *when the machine actually has
+            # more than one visible CUDA GPU*. On a single-GPU/CPU machine this is a no-op.
+            "use_data_parallel": False,
+            "checkpoint": {
+                "dir": "Checkpoints",
+                "interval": 10,
+            },
+            "early_stopping": {
+                "patience": 80,
+            },
+            "lr_scheduler": {
+                "patience": 12,
+                "factor": 0.5,
+                "threshold": 1e-4,
+            },
+            "loss": {
+                "alpha": 0.7,
+            },
             "show_plots": False,
         },
         "infer": {
             "device": "cuda",
-            "checkpoint_path": "../convUnet_Best_Test_mod_1/best_model.pth",
-            "save_dir_test": "Model_Results_1/test",
-            "save_dir_val": "Model_Results_1/val",
-            "save_dir_train": "Model_Results_1/train",
-            "save_dir_by_class_root": "Model_Results_1/by_class",
+            "checkpoint_path": "../Checkpoints/convUnet_Best_Test_mod_1/best_model.pth",
             "max_batches": 10,
             "gif_fps": 2,
-            "mean": None,
-            "std": None,
-            # If set, overrides data.scale_to_neg1_pos1 for visualization denorm.
-            # None keeps backward-compatible behavior (follow data.scale_to_neg1_pos1).
-            "denorm_from_neg1_pos1": None,
-            "save_images": True,
-            "save_gifs": True,
-            "show_plots": False,
-            "run_test": True,
-            "run_val": False,
-            "run_train": False,
+            # Overrides for visualization denormalization only (mapping model output back
+            # to [0,1] for saving/plotting). Leave null to derive automatically from
+            # dataset.normalization (recommended).
+            "normalization_override": {
+                "mean": None,
+                "std": None,
+                "denorm_from_neg1_pos1": None,
+            },
+            "save": {
+                "images": True,
+                "gifs": True,
+                "show_plots": False,
+                "dirs": {
+                    "test": "Model_Results_1/test",
+                    "val": "Model_Results_1/val",
+                    "train": "Model_Results_1/train",
+                    "by_class_root": "Model_Results_1/by_class",
+                },
+            },
+            "run": {
+                "test": True,
+                "val": False,
+                "train": False,
+            },
         },
     }
 
@@ -110,7 +144,8 @@ def load_config(path: Path, project_root: Path) -> Dict[str, Any]:
         ycfg = yaml.safe_load(f) or {}
     _deep_update(cfg, ycfg)
 
-    cfg["paths"]["dataset_folder"] = _resolve_path(cfg["paths"]["dataset_folder"], project_root)
+    cfg["paths"]["dataset_dir"] = _resolve_path(cfg["paths"]["dataset_dir"], project_root)
     cfg["paths"]["excel_path"] = _resolve_path(cfg["paths"]["excel_path"], project_root)
-    # checkpoint dir should remain relative to project root (created there)
+    # checkpoint dir/checkpoint_path should remain relative to project root (resolved
+    # where they are used, so a fresh run can still create them under project_root).
     return cfg

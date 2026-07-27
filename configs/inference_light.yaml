@@ -11,11 +11,11 @@ dataset:
   image_size: [100, 100]   # [H, W]
   channels: 3
   normalization:
-    mode: "neg1pos1"       # none | neg1pos1 | standardize
+    mode: "neg1pos1"       # deve combaciare con train_light.yaml
     mean: null
     std: null
   split:
-    strategy: "train_val_test"   # train_val_test | by_class
+    strategy: "train_val_test"   # stesso seed/percentuali di train_light.yaml -> stesso identico split
     seed: 424
     class_percentages:
       1: {train: 0.7, val: 0.15, test: 0.15}
@@ -29,26 +29,25 @@ dataloader:
     val: 4
     test: 4
 
+# Deve combaciare ESATTAMENTE con l'architettura usata in train_light.yaml,
+# altrimenti il caricamento dello state_dict fallisce/da' mismatch.
 model:
   unet:
     in_channels: 3
-    base_channels: 32
-    num_levels: 5
-    out_channels: 64
+    base_channels: 16
+    num_levels: 3
+    out_channels: 32
   stacked_conv:
-    hidden_dims: [64, 128, 256, 512]
+    hidden_dims: [32, 64]
     kernel_size: 3
     padding: 1
   final_out_channels: 3
 
 infer:
   device: "cuda"
-  checkpoint_path: "./Checkpoints/convUnet_Best_Test_mod_1/best_model.pth"
+  checkpoint_path: "./Checkpoints_light/best_model.pth"   # best = minimo di val loss, non l'ultimo/overfittato
   max_batches: 10
   gif_fps: 2
-  # Se denorm_from_neg1_pos1 e' null: derivato automaticamente da dataset.normalization.mode
-  # (comportamento consigliato). mean/std qui sotto servono solo se vuoi FORZARE
-  # una denormalizzazione diversa da quella derivata da dataset.normalization.
   normalization_override:
     mean: null
     std: null
@@ -59,11 +58,11 @@ infer:
     gifs: true
     show_plots: false
     dirs:
-      test: "Model_Results/Model_Results_1/test"
-      val: "Model_Results/Model_Results_1/val"
-      train: "Model_Results/Model_Results_1/train"
+      test: "Model_Results/Model_Results_light/test"
+      val: "Model_Results/Model_Results_light/val"
+      train: "Model_Results/Model_Results_light/train"
 
-  # inferenza solo su dati di test
+  # inferenza solo sui dati di TEST -> mai visti né in training né in validazione
   run:
     test: true
     val: false

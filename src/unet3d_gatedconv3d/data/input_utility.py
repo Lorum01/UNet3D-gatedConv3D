@@ -13,9 +13,11 @@ except ModuleNotFoundError:  # pragma: no cover
     cv2 = None
 
 
-def _resize_to_100x100(mask: np.ndarray) -> np.ndarray:
+def _resize_mask(mask: np.ndarray, image_size: tuple) -> np.ndarray:
+    target_h, target_w = image_size
     if cv2 is not None:
-        return cv2.resize(mask, (100, 100))
+        # cv2.resize takes (width, height)
+        return cv2.resize(mask, (target_w, target_h))
 
     # Fallback senza OpenCV: usa SciPy (preserva i valori float).
     from scipy.ndimage import zoom
@@ -25,9 +27,9 @@ def _resize_to_100x100(mask: np.ndarray) -> np.ndarray:
         raise ValueError(f"Invalid mask shape for resize: {mask.shape}")
 
     if mask.ndim == 2:
-        return zoom(mask, (100 / h, 100 / w), order=1)
+        return zoom(mask, (target_h / h, target_w / w), order=1)
     if mask.ndim == 3:
-        return zoom(mask, (100 / h, 100 / w, 1), order=1)
+        return zoom(mask, (target_h / h, target_w / w, 1), order=1)
     raise ValueError(f"Unsupported mask ndim={mask.ndim} for resize")
 
 
@@ -45,16 +47,24 @@ def load_event_classes_from_excel(excel_path):
     return event_class_dict
 
 
-def load_series_from_folders(mask_folder):
+def load_series_from_folders(mask_folder, image_size=(100, 100)):
     """
     Carica serie temporali da una struttura di cartelle.
+
+    Args:
+        mask_folder: cartella contenente una sottocartella per evento.
+        image_size: (H, W) target a cui ridimensionare ogni frame.
+
     Ritorna:
       - all_series: lista di array NumPy (T, H, W, C) o (T, H, W) per ogni evento
       - all_series_filenames: lista di liste di stringhe, una per ogni evento,
         contenente i nomi dei file/percorsi corrispondenti a ciascun frame.
+      - all_event_names: lista dei nomi delle sottocartelle evento, nello stesso
+        ordine (e con lo stesso indice) di `all_series`/`all_series_filenames`.
     """
     all_series = []
     all_series_filenames = []
+    all_event_names = []
 
     for event_folder in sorted(os.listdir(mask_folder)):
         mask_event_path = os.path.join(mask_folder, event_folder)
@@ -70,15 +80,16 @@ def load_series_from_folders(mask_folder):
             if not os.path.isfile(full_path):
                 continue
             mask = np.load(full_path)
-            mask_resized = _resize_to_100x100(mask)
+            mask_resized = _resize_mask(mask, image_size)
             mask_event_data.append(mask_resized)
             mask_event_filelist.append(full_path)
 
         mask_event_data = np.array(mask_event_data)
         all_series.append(mask_event_data)
         all_series_filenames.append(mask_event_filelist)
+        all_event_names.append(event_folder)
 
-    return all_series, all_series_filenames
+    return all_series, all_series_filenames, all_event_names
 
 
 def create_sequences_multiple_series_fixed_input(

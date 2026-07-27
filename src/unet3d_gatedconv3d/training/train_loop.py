@@ -1,9 +1,70 @@
+import csv
+import logging
 import os
 import torch
 import torch.optim as optim
 import matplotlib.pyplot as plt
 from .loss_function import weighted_mse_lpips_loss
 from .lr_scheduler import create_scheduler
+
+
+def _build_logger(checkpoint_dir: str) -> logging.Logger:
+    """
+    Logger dedicato a una singola run di training: scrive sia su console che su
+    `training.log` dentro checkpoint_dir. Un nuovo handler per ogni run (nome del
+    logger legato a checkpoint_dir) evita che run consecutive nello stesso processo
+    si mescolino nello stesso file.
+    """
+    logger = logging.getLogger(f"unet3d_gatedconv3d.train.{os.path.basename(checkpoint_dir)}")
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+    logger.handlers.clear()
+
+    fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
+
+    file_handler = logging.FileHandler(os.path.join(checkpoint_dir, "training.log"), encoding="utf-8")
+    file_handler.setFormatter(fmt)
+    logger.addHandler(file_handler)
+
+    stream_handler = logging.StreamHandler()
+    stream_handler.setFormatter(fmt)
+    logger.addHandler(stream_handler)
+
+    return logger
+
+def _maybe_wrap_data_parallel(model, device: str, use_data_parallel: bool):
+    """
+    Wrap `model` in nn.DataParallel only if requested AND the machine actually
+    has more than one visible CUDA GPU. Otherwise return the model unchanged.
+
+    Returns (model, is_wrapped).
+    """
+    if not use_data_parallel:
+        return model, False
+
+    if not str(device).lower().startswith("cuda"):
+        print(f"[DataParallel] Richiesto ma device={device!r} non è cuda: ignorato.")
+        return model, False
+
+    if not torch.cuda.is_available():
+        print("[DataParallel] Richiesto ma torch.cuda.is_available()=False: ignorato.")
+        return model, False
+
+    n_gpus = torch.cuda.device_count()
+    if n_gpus <= 1:
+        print(f"[DataParallel] Richiesto ma solo {n_gpus} GPU visibile/i: ignorato (serve >1).")
+        return model, False
+
+    print(f"[DataParallel] Attivo su {n_gpus} GPU.")
+    return torch.nn.DataParallel(model), True
+
+
+def _unwrapped_state_dict(model):
+    """Return a plain (non-DataParallel) state_dict, regardless of wrapping."""
+    if isinstance(model, torch.nn.DataParallel):
+        return model.module.state_dict()
+    return model.state_dict()
+
 
 def split_batch(batch):
     """
@@ -97,7 +158,8 @@ def training_loop_with_validation_3d(
     checkpoint_interval=1,      # salva ogni N epoche
     checkpoint_dir="checkpoints",
     alpha=0.5,
-    show_plots: bool = False
+    show_plots: bool = False,
+    use_data_parallel: bool = False,
 ):
     """
     Loop completo:
@@ -106,8 +168,15 @@ def training_loop_with_validation_3d(
     - Early stopping se nessun miglioramento per 'patience_early_stopping' epoche
     - Checkpoint: best, last, e periodici
     - Plot finale di train/val loss
+
+    `use_data_parallel`: se True, avvolge il modello in nn.DataParallel solo se la
+    macchina espone effettivamente più di una GPU CUDA visibile; altrimenti viene
+    ignorato silenziosamente (con un messaggio informativo) e si allena su singolo
+    device. I checkpoint salvati contengono sempre uno state_dict "bare" (senza
+    prefisso `module.`), indipendentemente dal wrapping usato in training.
     """
     model.to(device)
+    model, _is_parallel = _maybe_wrap_data_parallel(model, device, use_data_parallel)
 
     # Ottimizzatore
     optimizer = optim.Adam(model.parameters(), lr=lr)
@@ -129,63 +198,78 @@ def training_loop_with_validation_3d(
         checkpoint_dir = f"{checkpoint_dir}_{ts}"
         print(f"Checkpoint directory '{orig_dir}' already exists. Using new directory: '{checkpoint_dir}'")
     os.makedirs(checkpoint_dir, exist_ok=True)
-    
+
+    logger = _build_logger(checkpoint_dir)
+    logger.info(f"Checkpoint dir: {checkpoint_dir}")
+    logger.info(
+        f"num_epochs={num_epochs} lr={lr} device={device} alpha={alpha} "
+        f"patience_early_stopping={patience_early_stopping} patience_lr_scheduler={patience_lr_scheduler}"
+    )
+
+    metrics_path = os.path.join(checkpoint_dir, "metrics.csv")
+    with open(metrics_path, "w", newline="", encoding="utf-8") as f:
+        csv.writer(f).writerow(["epoch", "train_loss", "val_loss", "lr", "is_best"])
+
     best_val_loss = float('inf')  # traccia del best
     epochs_no_improve = 0         # contatore per early stopping
     train_losses = []
     val_losses = []
-    
+
     try:
         for epoch in range(num_epochs):
-            print(f"\n=== EPOCH {epoch+1}/{num_epochs} ===")
-        
+            logger.info(f"=== EPOCH {epoch+1}/{num_epochs} ===")
+
             # Training
             train_loss = train_one_epoch_3d(model, train_loader, optimizer, device=device, alpha=alpha)
-        
+
             # Validazione
             val_loss = evaluate_model_3d(model, val_loader, device=device, alpha=alpha)
-        
+
             current_lr = optimizer.param_groups[0]['lr']
-            print(f"[TRAIN] MSE-Lpips Loss: {train_loss:.4f}")
-            print(f"[VAL  ] MSE-Lpips Loss: {val_loss:.4f}")
-            print(f"[LR   ] {current_lr:.6f}")
-        
+            logger.info(f"[TRAIN] MSE-Lpips Loss: {train_loss:.4f}")
+            logger.info(f"[VAL  ] MSE-Lpips Loss: {val_loss:.4f}")
+            logger.info(f"[LR   ] {current_lr:.6f}")
+
             train_losses.append(train_loss)
             val_losses.append(val_loss)
-        
+
             # Step dello scheduler su metrica di validazione
             scheduler.step(val_loss)
-        
+
             # Salva best se migliora
-            if val_loss < best_val_loss - threshold:
+            is_best = val_loss < best_val_loss - threshold
+            if is_best:
                 best_val_loss = val_loss
                 epochs_no_improve = 0  # reset per early stopping
                 best_model_path = os.path.join(checkpoint_dir, "best_model.pth")
-                torch.save(model.state_dict(), best_model_path)
-                print(f"  -> Val loss migliorata. Best model salvato in '{best_model_path}'")
+                torch.save(_unwrapped_state_dict(model), best_model_path)
+                logger.info(f"  -> Val loss migliorata. Best model salvato in '{best_model_path}'")
             else:
                 # Non migliora abbastanza: incrementa contatore
                 epochs_no_improve += 1
-        
+
+            with open(metrics_path, "a", newline="", encoding="utf-8") as f:
+                csv.writer(f).writerow([epoch + 1, f"{train_loss:.6f}", f"{val_loss:.6f}", f"{current_lr:.8f}", int(is_best)])
+
             # Checkpoint periodico
             if (epoch + 1) % checkpoint_interval == 0:
                 checkpoint_path = os.path.join(checkpoint_dir, f"checkpoint_epoch_{epoch+1}.pth")
-                torch.save(model.state_dict(), checkpoint_path)
-                print(f"  -> Checkpoint salvato in '{checkpoint_path}'")
-        
+                torch.save(_unwrapped_state_dict(model), checkpoint_path)
+                logger.info(f"  -> Checkpoint salvato in '{checkpoint_path}'")
+
             # Early Stopping manuale
             if epochs_no_improve >= patience_early_stopping:
-                print("Early stopping attivato (nessun miglioramento sufficiente).")
+                logger.info("Early stopping attivato (nessun miglioramento sufficiente).")
                 break
 
     except KeyboardInterrupt:
-        print("\nInterruzione da tastiera. Procedo con salvataggi e plot.")
-    
+        logger.warning("Interruzione da tastiera. Procedo con salvataggi e plot.")
+
     # Salva il modello dell'ultima epoca
     last_model_path = os.path.join(checkpoint_dir, "last_model.pth")
-    torch.save(model.state_dict(), last_model_path)
-    print(f"Modello dell'ultima epoca salvato in '{last_model_path}'")
-    
+    torch.save(_unwrapped_state_dict(model), last_model_path)
+    logger.info(f"Modello dell'ultima epoca salvato in '{last_model_path}'")
+
     # Plot finale delle loss per epoca
     plt.figure()
     epochs_range = range(1, len(train_losses) + 1)
@@ -200,9 +284,9 @@ def training_loop_with_validation_3d(
     out_plot_path = os.path.join(checkpoint_dir, "train_val_loss.png")
     try:
         plt.savefig(out_plot_path, dpi=150, bbox_inches='tight')
-        print(f"Train/Val loss plot saved to {out_plot_path}")
+        logger.info(f"Train/Val loss plot saved to {out_plot_path}")
     except Exception as e:
-        print(f"Warning: could not save plot to {out_plot_path}: {e}")
+        logger.warning(f"Could not save plot to {out_plot_path}: {e}")
 
     if show_plots:
         try:
@@ -212,8 +296,13 @@ def training_loop_with_validation_3d(
             pass
     else:
         plt.close()
+
+    for handler in list(logger.handlers):
+        handler.close()
+        logger.removeHandler(handler)
     
     return {
         "train_losses": train_losses,
-        "val_losses": val_losses
+        "val_losses": val_losses,
+        "checkpoint_dir": checkpoint_dir,
     }

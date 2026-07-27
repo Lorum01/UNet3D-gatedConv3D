@@ -194,14 +194,16 @@ class Model(nn.Module):
 
 
 def build_model(cfg: dict) -> Model:
+    unet_cfg = cfg["unet"]
+    stacked_cfg = cfg["stacked_conv"]
     return Model(
-        unet_in_channels=int(cfg["unet_in_channels"]),
-        unet_base_channels=int(cfg["unet_base_channels"]),
-        unet_num_levels=int(cfg["unet_num_levels"]),
-        unet_out_channels=int(cfg["unet_out_channels"]),
-        stackedconv_hidden_dims=list(cfg["stackedconv_hidden_dims"]),
-        stackedconv_kernel_size=int(cfg["stackedconv_kernel_size"]),
-        stackedconv_padding=int(cfg["stackedconv_padding"]),
+        unet_in_channels=int(unet_cfg["in_channels"]),
+        unet_base_channels=int(unet_cfg["base_channels"]),
+        unet_num_levels=int(unet_cfg["num_levels"]),
+        unet_out_channels=int(unet_cfg["out_channels"]),
+        stackedconv_hidden_dims=list(stacked_cfg["hidden_dims"]),
+        stackedconv_kernel_size=int(stacked_cfg["kernel_size"]),
+        stackedconv_padding=int(stacked_cfg["padding"]),
         final_out_channels=int(cfg["final_out_channels"]),
     )
 

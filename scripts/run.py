@@ -42,23 +42,26 @@ class _TeeTextIO:
 
 def _infer_artifact_dirs(cfg: Dict[str, Any], project_root: Path) -> list[Path]:
     icfg = cfg.get("infer") or {}
-    dcfg = cfg.get("data") or {}
+    dcfg = cfg.get("dataset") or {}
+    save_cfg = icfg.get("save") or {}
+    save_dirs = save_cfg.get("dirs") or {}
+    run_cfg = icfg.get("run") or {}
 
-    split_strategy = str(dcfg.get("split_strategy", "train_val_test")).strip().lower()
+    split_strategy = str((dcfg.get("split") or {}).get("strategy", "train_val_test")).strip().lower()
     if split_strategy == "by_class":
-        out_root = icfg.get("save_dir_by_class_root", "Model_Results_1/by_class")
+        out_root = save_dirs.get("by_class_root", "Model_Results_1/by_class")
         return [project_root / out_root]
 
     dirs: list[Path] = []
-    if bool(icfg.get("run_test", True)):
-        dirs.append(project_root / icfg.get("save_dir_test", "Model_Results_1/test"))
-    if bool(icfg.get("run_val", False)):
-        dirs.append(project_root / icfg.get("save_dir_val", "Model_Results_1/val"))
-    if bool(icfg.get("run_train", False)):
-        dirs.append(project_root / icfg.get("save_dir_train", "Model_Results_1/train"))
+    if bool(run_cfg.get("test", True)):
+        dirs.append(project_root / save_dirs.get("test", "Model_Results_1/test"))
+    if bool(run_cfg.get("val", False)):
+        dirs.append(project_root / save_dirs.get("val", "Model_Results_1/val"))
+    if bool(run_cfg.get("train", False)):
+        dirs.append(project_root / save_dirs.get("train", "Model_Results_1/train"))
 
     if not dirs:
-        dirs.append(project_root / icfg.get("save_dir_test", "Model_Results_1/test"))
+        dirs.append(project_root / save_dirs.get("test", "Model_Results_1/test"))
     return dirs
 
 

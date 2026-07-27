@@ -147,25 +147,34 @@ def test_model_create_gifs_3ch(
 
     if checkpoint_path:
         state = torch.load(checkpoint_path, map_location=device)
-        model = torch.nn.DataParallel(model) # Per caricare modelli salvati con DataParallel
+        if not isinstance(state, dict):
+            raise ValueError(f"Checkpoint at {checkpoint_path!r} did not contain a state_dict.")
 
-        # Compatibility mapping: some checkpoints use attribute name `convlstm`
-        # while current model uses `stackedConv`. Detect and remap keys.
-        ck_keys = list(state.keys()) if isinstance(state, dict) else []
-        model_keys = list(model.state_dict().keys())
+        # Compatibility mapping: some legacy checkpoints use attribute name `convlstm`
+        # while the current model uses `stackedConv`. Detect and remap keys.
+        if any('convlstm' in k for k in state):
+            state = {k.replace('convlstm', 'stackedConv'): v for k, v in state.items()}
 
-        if any('convlstm' in k for k in ck_keys) and any('stackedConv' in k for k in model_keys):
-            new_state = {}
-            for k, v in state.items():
-                new_k = k.replace('convlstm', 'stackedConv')
-                new_state[new_k] = v
-            state = new_state
+        # Normalize DataParallel-style `module.` prefixes so both legacy checkpoints
+        # (trained with nn.DataParallel, keys prefixed) and current checkpoints
+        # (trained bare, no prefix) load into this bare (non-DataParallel) model.
+        ckpt_keys = list(state.keys())
+        has_module_prefix = bool(ckpt_keys) and all(k.startswith('module.') for k in ckpt_keys)
+        if has_module_prefix:
+            state = {k[len('module.'):]: v for k, v in state.items()}
 
-        try:
-            model.load_state_dict(state)
-        except RuntimeError:
-            # Fallback: try non-strict loading to tolerate minor naming/size diffs
-            model.load_state_dict(state, strict=False)
+        missing, unexpected = model.load_state_dict(state, strict=False)
+        if missing or unexpected:
+            print(
+                f"[WARN] Checkpoint '{checkpoint_path}' loaded with mismatches: "
+                f"{len(missing)} missing key(s), {len(unexpected)} unexpected key(s)."
+            )
+            if missing:
+                print(f"  missing (first 5): {missing[:5]}")
+            if unexpected:
+                print(f"  unexpected (first 5): {unexpected[:5]}")
+        else:
+            print(f"[OK] Checkpoint '{checkpoint_path}' loaded (all keys matched).")
     model.eval()
 
     denorm = build_denorm(mean, std, device, scale_to_neg1_pos1=scale_to_neg1_pos1)

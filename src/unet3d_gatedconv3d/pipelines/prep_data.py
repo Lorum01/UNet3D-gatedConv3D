@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import csv
 from collections import Counter
-from typing import Any, Dict
+from pathlib import Path
+from typing import Any, Dict, Optional
 
 import numpy as np
 from torch.utils.data import DataLoader, Subset
@@ -25,12 +27,14 @@ from ..data.dataloader import (
 
 def _load_events(cfg: Dict[str, Any]):
     paths = cfg["paths"]
+    dcfg = cfg["dataset"]
 
-    dataset_folder = paths["dataset_folder"]
+    dataset_dir = paths["dataset_dir"]
     excel_path = paths["excel_path"]
+    image_size = tuple(dcfg["image_size"])
 
-    # 1) Carica serie + filenames
-    all_series, all_series_filenames = load_series_from_folders(dataset_folder)
+    # 1) Carica serie + filenames + nomi cartella evento
+    all_series, all_series_filenames, event_names = load_series_from_folders(dataset_dir, image_size=image_size)
     print(f"Numero totale di serie caricate: {len(all_series)}")
     if len(all_series) > 0:
         print(f"Dimensione della prima serie: {all_series[0].shape}")
@@ -44,7 +48,27 @@ def _load_events(cfg: Dict[str, Any]):
     for classe, count in class_counts.items():
         print(f"{classe}: {count}")
 
-    return all_series, all_series_filenames, event_labels
+    return all_series, all_series_filenames, event_labels, event_names
+
+
+def save_split_assignments(split_info: Optional[Dict[str, Dict[str, Any]]], out_path) -> None:
+    """
+    Salva su CSV la mappatura evento -> (classe, split), cosi' si puo' sapere
+    quali cartelle evento sono finite in train/val/test.
+
+    Nessun effetto se `split_info` e' None (es. split.strategy='by_class', dove
+    non esiste una distinzione train/val/test).
+    """
+    if not split_info:
+        return
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(out_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["event", "class", "split"])
+        for event_name, info in sorted(split_info.items()):
+            writer.writerow([event_name, info["class"], info["split"]])
+    print(f"Split evento->split salvato in '{out_path}'")
 
 
 def _build_sequences_from_events(
@@ -75,9 +99,14 @@ def _build_sequences_from_events(
 
     check_range_of_images(all_inputs, all_targets)
 
-    expected = tuple(dcfg["expected_input_shape"])
-    invalid_inputs = [idx for idx, inp in enumerate(all_inputs) if getattr(inp, "shape", None) != expected]
-    invalid_targets = [idx for idx, tgt in enumerate(all_targets) if getattr(tgt, "shape", None) != expected]
+    # Shape attesa derivata da dataset.input_length/prediction_length + image_size + channels
+    # (niente campo config ridondante da tenere in sincronia a mano).
+    h, w = int(dcfg["image_size"][0]), int(dcfg["image_size"][1])
+    c = int(dcfg["channels"])
+    expected_input = (int(dcfg["input_length"]), h, w, c)
+    expected_target = (int(dcfg["prediction_length"]), h, w, c)
+    invalid_inputs = [idx for idx, inp in enumerate(all_inputs) if getattr(inp, "shape", None) != expected_input]
+    invalid_targets = [idx for idx, tgt in enumerate(all_targets) if getattr(tgt, "shape", None) != expected_target]
     if invalid_inputs:
         print(f"[ATTENZIONE] {len(invalid_inputs)} input con shape non attesa. Esempio: {all_inputs[invalid_inputs[0]].shape}")
     if invalid_targets:
@@ -91,20 +120,19 @@ def _build_sequences_from_events(
 
 
 def build_dataloaders(cfg: Dict[str, Any]):
-    dcfg = cfg["data"]
+    dcfg = cfg["dataset"]
     lcfg = cfg.get("dataloader", {})
 
-    split_strategy = str(dcfg.get("split_strategy", "train_val_test")).strip().lower()
-    normalization = dcfg.get("normalization", None)
-    if normalization is None:
-        # Legacy behavior: follow `scale_to_neg1_pos1`
-        normalization = "neg1pos1" if bool(dcfg.get("scale_to_neg1_pos1", True)) else "none"
-    normalization = str(normalization).strip().lower()
+    split_cfg = dcfg["split"]
+    split_strategy = str(split_cfg.get("strategy", "train_val_test")).strip().lower()
+
+    norm_cfg = dcfg["normalization"]
+    normalization = str(norm_cfg.get("mode", "neg1pos1")).strip().lower()
     if normalization not in {"none", "neg1pos1", "standardize"}:
-        raise ValueError(f"Unsupported data.normalization={normalization!r}. Use 'none'|'neg1pos1'|'standardize'.")
+        raise ValueError(f"Unsupported dataset.normalization.mode={normalization!r}. Use 'none'|'neg1pos1'|'standardize'.")
 
     scale_to_neg1_pos1 = normalization == "neg1pos1"
-    all_series, all_series_filenames, event_labels = _load_events(cfg)
+    all_series, all_series_filenames, event_labels, event_names = _load_events(cfg)
 
     if split_strategy == "by_class":
         all_inputs_list, all_targets_list, labels, input_fnames, target_fnames = _build_sequences_from_events(
@@ -116,10 +144,13 @@ def build_dataloaders(cfg: Dict[str, Any]):
 
         mean_c = std_c = None
         if normalization == "standardize":
-            mean_c = dcfg.get("mean", None)
-            std_c = dcfg.get("std", None)
+            mean_c = norm_cfg.get("mean", None)
+            std_c = norm_cfg.get("std", None)
             if mean_c is None or std_c is None:
-                raise ValueError("data.normalization='standardize' with split_strategy='by_class' requires data.mean and data.std in config.")
+                raise ValueError(
+                    "dataset.normalization.mode='standardize' with dataset.split.strategy='by_class' "
+                    "requires dataset.normalization.mean and dataset.normalization.std in config."
+                )
 
         # Dataset completo (come notebook: scaling opzionale + filenames)
         full_dataset = CustomDataset(
@@ -136,28 +167,26 @@ def build_dataloaders(cfg: Dict[str, Any]):
         # Nessuno split train/val/test: crea subset per classe dall'Excel
         unique_classes = sorted(set(int(x) for x in labels.tolist()))
         loaders_by_class = {}
-        bs = int(lcfg.get("batch_size_test", 4))
+        bs = int(lcfg.get("batch_size", {}).get("test", 4))
 
         for c in unique_classes:
             idxs = [i for i, lab in enumerate(labels.tolist()) if int(lab) == c]
             subset = Subset(full_dataset, idxs)
             loaders_by_class[c] = DataLoader(subset, batch_size=bs, shuffle=False, collate_fn=custom_collate_fn)
 
-        # Per compatibilità: restituisce un dict quando split_strategy=by_class
+        # Per compatibilità: restituisce un dict quando split.strategy=by_class.
+        # Non esiste una distinzione train/val/test qui, quindi split_info=None.
         check_dataset_range(full_dataset, standardized=True)
-        return loaders_by_class
+        return loaders_by_class, None
 
     if split_strategy != "train_val_test":
-        raise ValueError(f"Unsupported data.split_strategy={split_strategy!r}. Use 'train_val_test' or 'by_class'.")
+        raise ValueError(f"Unsupported dataset.split.strategy={split_strategy!r}. Use 'train_val_test' or 'by_class'.")
 
     # ---- split train/val/test (default) ----
     # Split a livello EVENTO per evitare leakage (finestre dello stesso evento in split diversi).
-    if bool(dcfg.get("use_percent_distribution", True)):
-        class_distribution = pct_to_counts(dcfg["class_pct"], event_labels, round_method="round")
-    else:
-        raise ValueError("use_percent_distribution=false non è supportato in questa versione (manca CLASS_DISTRIBUTION).")
+    class_distribution = pct_to_counts(split_cfg["class_percentages"], event_labels, round_method="round")
 
-    seed = int(dcfg.get("split_seed", 424))
+    seed = int(split_cfg.get("seed", 424))
     train_event_idx, val_event_idx, test_event_idx = split_by_class_distribution(
         event_labels, class_distribution, shuffle=True, seed=seed
     )
@@ -170,6 +199,16 @@ def build_dataloaders(cfg: Dict[str, Any]):
     if overlap_tv or overlap_tt or overlap_vt:
         print(f"[ATTENZIONE] Overlap eventi fra split: train∩val={len(overlap_tv)}, train∩test={len(overlap_tt)}, val∩test={len(overlap_vt)}")
     print(f"Eventi per split: train={len(train_event_idx)} val={len(val_event_idx)} test={len(test_event_idx)}")
+
+    # Mappatura evento (nome cartella) -> {classe, split}, cosi' si puo' sempre
+    # risalire a quali eventi sono finiti in train/val/test (vedi save_split_assignments).
+    split_info: Dict[str, Dict[str, Any]] = {}
+    for idx in train_event_idx:
+        split_info[event_names[idx]] = {"class": int(event_labels[idx]), "split": "train"}
+    for idx in val_event_idx:
+        split_info[event_names[idx]] = {"class": int(event_labels[idx]), "split": "val"}
+    for idx in test_event_idx:
+        split_info[event_names[idx]] = {"class": int(event_labels[idx]), "split": "test"}
 
     def _select_events(indices):
         sel_series = [all_series[i] for i in indices]
@@ -239,21 +278,22 @@ def build_dataloaders(cfg: Dict[str, Any]):
         target_filenames=te_tg_fn,
     )
 
+    batch_size_cfg = lcfg.get("batch_size", {})
     train_loader = DataLoader(
         train_dataset,
-        batch_size=int(lcfg["batch_size_train"]),
+        batch_size=int(batch_size_cfg["train"]),
         shuffle=True,
         collate_fn=custom_collate_fn,
     )
     val_loader = DataLoader(
         val_dataset,
-        batch_size=int(lcfg["batch_size_val"]),
+        batch_size=int(batch_size_cfg["val"]),
         shuffle=False,
         collate_fn=custom_collate_fn,
     )
     test_loader = DataLoader(
         test_dataset,
-        batch_size=int(lcfg["batch_size_test"]),
+        batch_size=int(batch_size_cfg["test"]),
         shuffle=False,
         collate_fn=custom_collate_fn,
     )
@@ -261,4 +301,4 @@ def build_dataloaders(cfg: Dict[str, Any]):
     check_dataset_range(train_dataset, standardized=True)
     check_dataset_range(val_dataset, standardized=True)
     check_dataset_range(test_dataset, standardized=True)
-    return train_loader, val_loader, test_loader
+    return (train_loader, val_loader, test_loader), split_info

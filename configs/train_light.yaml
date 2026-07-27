@@ -12,7 +12,7 @@ dataset:
   channels: 3
   normalization:
     mode: "neg1pos1"       # none | neg1pos1 | standardize
-    mean: null             # required only if mode: standardize (and split.strategy: by_class)
+    mean: null
     std: null
   split:
     strategy: "train_val_test"   # train_val_test | by_class
@@ -32,11 +32,11 @@ dataloader:
 model:
   unet:
     in_channels: 3
-    base_channels: 32
-    num_levels: 5
-    out_channels: 64
+    base_channels: 16      # was 32 -> dimezza i canali a ogni livello (memoria/compute ~/4)
+    num_levels: 3           # was 5  -> bottleneck meno profondo, meno blocchi residui
+    out_channels: 32        # was 64
   stacked_conv:
-    hidden_dims: [64, 128, 256, 512]
+    hidden_dims: [32, 64]   # was [64, 128, 256, 512] -> ConvGate molto più leggero
     kernel_size: 3
     padding: 1
   final_out_channels: 3
@@ -45,10 +45,9 @@ train:
   device: "cuda"
   num_epochs: 250
   lr: 1.0e-3
-  # Only takes effect if the machine actually exposes >1 CUDA GPU; otherwise ignored.
   use_data_parallel: false
   checkpoint:
-    dir: "Checkpoints"
+    dir: "Checkpoints_light"
     interval: 10
   early_stopping:
     patience: 80

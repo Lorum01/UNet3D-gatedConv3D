@@ -219,7 +219,8 @@ Dataset/
 *.jpg
 *.jpeg
 
-Checkpoints/
+Checkpoints*/
+Model_Results/
 Model_Results_*/
 ~$EventsEtnaCLASS_Final.xlsx
 DATA_SHAPE_CONTEXT.md

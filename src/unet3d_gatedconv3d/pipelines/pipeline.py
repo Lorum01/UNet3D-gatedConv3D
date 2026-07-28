@@ -41,6 +41,7 @@ def run(cfg: Dict[str, Any], project_root: Path) -> None:
             checkpoint_interval=int(tcfg["checkpoint"]["interval"]),
             checkpoint_dir=str(project_root / tcfg["checkpoint"]["dir"]),
             alpha=float(tcfg["loss"]["alpha"]),
+            lpips_input_mode=str(tcfg["loss"].get("lpips_input_mode", "none")),
             show_plots=bool(tcfg.get("show_plots", False)),
             use_data_parallel=bool(tcfg.get("use_data_parallel", False)),
         )

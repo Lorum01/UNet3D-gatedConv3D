@@ -94,6 +94,17 @@ def _defaults() -> Dict[str, Any]:
             },
             "loss": {
                 "alpha": 0.7,
+                # Come preparare l'output del modello prima di passarlo a LPIPS
+                # (non influisce sulla MSE, che usa sempre gli outputs originali):
+                # "none":  nessuna trasformazione (default). Gli outputs possono
+                #          uscire da [-1,1] se il modello non ha un'attivazione
+                #          limitata in uscita; la LPIPS riceve input fuori dal
+                #          suo dominio senza errori, ma in modo meno affidabile.
+                # "clamp": torch.clamp(outputs, -1, 1). Taglio netto: gradiente
+                #          del ramo LPIPS nullo sugli elementi fuori range.
+                # "tanh":  torch.tanh(outputs). Compressione morbida in (-1,1),
+                #          senza zone a gradiente esattamente zero.
+                "lpips_input_mode": "none",
             },
             "show_plots": False,
         },

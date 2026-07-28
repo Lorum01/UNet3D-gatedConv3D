@@ -4,7 +4,11 @@ import os
 import torch
 import torch.optim as optim
 import matplotlib.pyplot as plt
-from .loss_function import weighted_mse_lpips_loss
+from .loss_function import (
+    get_lpips_range_stats,
+    reset_lpips_range_stats,
+    weighted_mse_lpips_loss,
+)
 from .lr_scheduler import create_scheduler
 
 
@@ -78,12 +82,12 @@ def split_batch(batch):
 
 # Training e Validation
 
-def train_one_epoch_3d(model, dataloader, optimizer, device="cuda", alpha=0.5): 
+def train_one_epoch_3d(model, dataloader, optimizer, device="cuda", alpha=0.5, lpips_input_mode="none"):
     """
     Esegue una epoca di training su modello 3D.
     Input batch:  (B, C, T, H, W)
     Input modello: (B, C, T, H, W).
-    Loss: weighted_mse_lpips_loss(outputs, targets, alpha).
+    Loss: weighted_mse_lpips_loss(outputs, targets, alpha, lpips_input_mode).
     """
     model.train()
     running_loss = 0.0
@@ -99,7 +103,7 @@ def train_one_epoch_3d(model, dataloader, optimizer, device="cuda", alpha=0.5):
         outputs = model(data)  # (B, C, T, H, W)
 
         # Loss composita MSE+LPIPS pesata da alpha
-        loss = weighted_mse_lpips_loss(outputs, targets, alpha=alpha)
+        loss = weighted_mse_lpips_loss(outputs, targets, alpha=alpha, lpips_input_mode=lpips_input_mode)
         # Per sola MSE:  loss = F.mse_loss(outputs, targets)
 
         loss.backward()
@@ -113,7 +117,7 @@ def train_one_epoch_3d(model, dataloader, optimizer, device="cuda", alpha=0.5):
 
 
 @torch.no_grad()
-def evaluate_model_3d(model, dataloader, device="cuda", alpha=0.5):
+def evaluate_model_3d(model, dataloader, device="cuda", alpha=0.5, lpips_input_mode="none"):
     """
     Valutazione su validation/test set con la stessa loss del training.
     """
@@ -123,12 +127,12 @@ def evaluate_model_3d(model, dataloader, device="cuda", alpha=0.5):
 
     for batch in dataloader:
         data, targets, _, _ = split_batch(batch)
-        
+
         data = data.to(device)
         targets = targets.to(device)
 
         outputs = model(data)
-        loss = weighted_mse_lpips_loss(outputs, targets, alpha=alpha)
+        loss = weighted_mse_lpips_loss(outputs, targets, alpha=alpha, lpips_input_mode=lpips_input_mode)
         # Per sola MSE: loss = F.mse_loss(outputs, targets)
 
         total_loss += loss.item()
@@ -158,6 +162,7 @@ def training_loop_with_validation_3d(
     checkpoint_interval=1,      # salva ogni N epoche
     checkpoint_dir="checkpoints",
     alpha=0.5,
+    lpips_input_mode="none",
     show_plots: bool = False,
     use_data_parallel: bool = False,
 ):
@@ -203,6 +208,7 @@ def training_loop_with_validation_3d(
     logger.info(f"Checkpoint dir: {checkpoint_dir}")
     logger.info(
         f"num_epochs={num_epochs} lr={lr} device={device} alpha={alpha} "
+        f"lpips_input_mode={lpips_input_mode} "
         f"patience_early_stopping={patience_early_stopping} patience_lr_scheduler={patience_lr_scheduler}"
     )
 
@@ -219,16 +225,41 @@ def training_loop_with_validation_3d(
         for epoch in range(num_epochs):
             logger.info(f"=== EPOCH {epoch+1}/{num_epochs} ===")
 
+            # Azzera i contatori di range LPIPS: verranno riempiti da train+val
+            # di questa epoca e riassunti in un unico log qui sotto (invece di
+            # un warning ad ogni batch).
+            reset_lpips_range_stats()
+
             # Training
-            train_loss = train_one_epoch_3d(model, train_loader, optimizer, device=device, alpha=alpha)
+            train_loss = train_one_epoch_3d(
+                model, train_loader, optimizer, device=device, alpha=alpha,
+                lpips_input_mode=lpips_input_mode,
+            )
 
             # Validazione
-            val_loss = evaluate_model_3d(model, val_loader, device=device, alpha=alpha)
+            val_loss = evaluate_model_3d(
+                model, val_loader, device=device, alpha=alpha,
+                lpips_input_mode=lpips_input_mode,
+            )
 
             current_lr = optimizer.param_groups[0]['lr']
             logger.info(f"[TRAIN] MSE-Lpips Loss: {train_loss:.4f}")
             logger.info(f"[VAL  ] MSE-Lpips Loss: {val_loss:.4f}")
             logger.info(f"[LR   ] {current_lr:.6f}")
+
+            # Report aggregato (una volta per epoca) di quanti output erano
+            # fuori dal range [-1,1] atteso da LPIPS, indipendentemente da
+            # lpips_input_mode (che corregge solo l'input a LPIPS, non lo
+            # segnala).
+            range_stats = get_lpips_range_stats()
+            if range_stats["outputs_total"] > 0:
+                out_of_range = range_stats["outputs_out_of_range"]
+                total = range_stats["outputs_total"]
+                pct = 100.0 * out_of_range / total
+                logger.info(
+                    f"[LPIPS] outputs fuori da [-1,1]: {out_of_range}/{total} "
+                    f"elementi ({pct:.2f}%) — lpips_input_mode={lpips_input_mode}"
+                )
 
             train_losses.append(train_loss)
             val_losses.append(val_loss)

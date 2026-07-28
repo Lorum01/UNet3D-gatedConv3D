@@ -47,14 +47,15 @@ train:
   lr: 1.0e-3
   use_data_parallel: false
   checkpoint:
-    dir: "Checkpoints_light"
+    dir: "Checkpoints_light_1"
     interval: 10
   early_stopping:
-    patience: 80
+    patience: 40
   lr_scheduler:
     patience: 12
     factor: 0.5
     threshold: 1.0e-4
   loss:
     alpha: 0.7
+    lpips_input_mode: "none"   # none | clamp | tanh (default: none, vedi config.py)
   show_plots: false

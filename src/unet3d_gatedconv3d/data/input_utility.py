@@ -35,16 +35,34 @@ def _resize_mask(mask: np.ndarray, image_size: tuple) -> np.ndarray:
 
 def load_event_classes_from_excel(excel_path):
     """
-    Legge il file Excel e restituisce un dizionario:
-       indice_evento -> classe
-    Assumendo che l'ordine delle righe corrisponda all'ordine
-    in cui verranno caricate le cartelle con sorted().
+    Legge il file Excel e restituisce due dizionari (chiave = indice riga):
+       - event_class_dict: indice_evento -> classe
+       - event_split_override_dict: indice_evento -> "train"/"val"/"test" o None
+    Assumendo che l'ordine delle righe corrisponda all'ordine in cui verranno
+    caricate le cartelle "base" (senza suffisso "_flipped") con sorted().
+
+    La colonna "Split" e' opzionale: se assente o vuota per una riga, quell'evento
+    segue lo split calcolato dalle percentuali per classe (dataset.split.class_percentages).
     """
     df = pd.read_excel(excel_path)
     event_class_dict = {}
+    event_split_override_dict = {}
+    has_split_col = "Split" in df.columns
     for i, row in df.iterrows():
-        event_class_dict[i] = row["Class"]  
-    return event_class_dict
+        event_class_dict[i] = row["Class"]
+
+        split_value = row["Split"] if has_split_col else None
+        if split_value is None or pd.isna(split_value):
+            split_value = None
+        else:
+            split_value = str(split_value).strip().lower()
+            if split_value not in {"train", "val", "test"}:
+                raise ValueError(
+                    f"Excel '{excel_path}': colonna 'Split' non valida alla riga {i}: "
+                    f"{split_value!r} (atteso 'train'/'val'/'test' o vuoto)."
+                )
+        event_split_override_dict[i] = split_value
+    return event_class_dict, event_split_override_dict
 
 
 def load_series_from_folders(mask_folder, image_size=(100, 100)):

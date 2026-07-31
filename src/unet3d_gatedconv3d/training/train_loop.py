@@ -193,15 +193,10 @@ def training_loop_with_validation_3d(
         threshold=threshold
     )
 
-    # Prepara cartella checkpoint
-    # Se la cartella esiste già, per evitare sovrascritture aggiungi un suffisso
-    # con data/ora al nome (es. Checkpoints_20251230_153045)
-    if os.path.exists(checkpoint_dir):
-        from datetime import datetime
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        orig_dir = checkpoint_dir
-        checkpoint_dir = f"{checkpoint_dir}_{ts}"
-        print(f"Checkpoint directory '{orig_dir}' already exists. Using new directory: '{checkpoint_dir}'")
+    # La risoluzione "evita sovrascritture" (suffisso data/ora se la cartella esiste
+    # gia') e' decisa a monte da pipeline.run(), PRIMA di scrivere split_assignments.csv,
+    # cosi' che tutti gli artefatti di una run (split_assignments, log, metrics, checkpoint)
+    # finiscano nella stessa cartella. Qui la cartella esiste gia': non va rinominata.
     os.makedirs(checkpoint_dir, exist_ok=True)
 
     logger = _build_logger(checkpoint_dir)

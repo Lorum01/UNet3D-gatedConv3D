@@ -25,6 +25,9 @@ from ..data.dataloader import (
 )
 
 
+_FLIPPED_SUFFIX = "_flipped"
+
+
 def _load_events(cfg: Dict[str, Any]):
     paths = cfg["paths"]
     dcfg = cfg["dataset"]
@@ -39,16 +42,128 @@ def _load_events(cfg: Dict[str, Any]):
     if len(all_series) > 0:
         print(f"Dimensione della prima serie: {all_series[0].shape}")
 
-    # 2) Classi da Excel
-    event_class_dict = load_event_classes_from_excel(excel_path)
-    event_labels = [event_class_dict[i] for i, _ in enumerate(all_series)]
+    # 2) Classi (+ eventuale override di split) da Excel.
+    # Le cartelle "*_flipped" sono varianti aumentate di un evento base e non hanno
+    # una riga propria in Excel: il match riga<->cartella resta posizionale ma SOLO
+    # sulle cartelle base, cosi' la presenza di varianti flipped (intercalate
+    # alfabeticamente) non disallinea la corrispondenza per tutti gli altri eventi.
+    event_class_dict, event_split_override_dict = load_event_classes_from_excel(excel_path)
+
+    base_positions = [i for i, name in enumerate(event_names) if not name.endswith(_FLIPPED_SUFFIX)]
+    if len(base_positions) != len(event_class_dict):
+        raise ValueError(
+            f"Numero di cartelle evento 'base' ({len(base_positions)}) diverso dal numero "
+            f"di righe in '{excel_path}' ({len(event_class_dict)}). Controlla dataset_dir/excel_path."
+        )
+
+    name_to_class: Dict[str, int] = {}
+    name_to_split_override: Dict[str, Optional[str]] = {}
+    for row_i, folder_i in enumerate(base_positions):
+        name = event_names[folder_i]
+        name_to_class[name] = int(event_class_dict[row_i])
+        name_to_split_override[name] = event_split_override_dict[row_i]
+
+    event_labels: list = [None] * len(event_names)
+    event_split_override: list = [None] * len(event_names)
+    for i, name in enumerate(event_names):
+        if name.endswith(_FLIPPED_SUFFIX):
+            base_name = name[: -len(_FLIPPED_SUFFIX)]
+            if base_name not in name_to_class:
+                raise ValueError(
+                    f"Evento flipped '{name}' senza evento base corrispondente '{base_name}' "
+                    f"in '{dataset_dir}'."
+                )
+            event_labels[i] = name_to_class[base_name]
+            # Nessun override qui: gli eventi flipped seguono sempre lo split finale
+            # del loro evento base (vedi _split_events_train_val_test), non partecipano
+            # al meccanismo di override/percentuali per classe.
+        else:
+            event_labels[i] = name_to_class[name]
+            event_split_override[i] = name_to_split_override[name]
 
     class_counts = Counter(event_labels)
     print("Numero totale serie per ogni classe:")
     for classe, count in class_counts.items():
         print(f"{classe}: {count}")
 
-    return all_series, all_series_filenames, event_labels, event_names
+    return all_series, all_series_filenames, event_labels, event_names, event_split_override
+
+
+def _split_events_train_val_test(
+    *,
+    event_labels,
+    event_names,
+    event_split_override,
+    class_percentages,
+    seed: int,
+):
+    """
+    Determina lo split (train/val/test) per ogni evento, rispettando:
+      - gli override espliciti da Excel (colonna 'Split') sugli eventi base;
+      - il vincolo che ogni evento '*_flipped' finisca SEMPRE nello stesso split
+        del proprio evento base (stessa cartella senza il suffisso), per evitare
+        che una serie e la sua variante aumentata finiscano in split diversi.
+
+    Gli eventi flipped non partecipano al calcolo delle percentuali per classe:
+    seguono passivamente lo split (gia' determinato) del loro evento base.
+
+    Se gli override consumano piu' eventi di quanti il target calcolato dalle
+    percentuali preveda per quella classe/split, il target residuo viene
+    clampato a 0 (con un warning), invece di sollevare un errore.
+    """
+    primary_idx = [i for i, name in enumerate(event_names) if not name.endswith(_FLIPPED_SUFFIX)]
+    flipped_idx = [i for i, name in enumerate(event_names) if name.endswith(_FLIPPED_SUFFIX)]
+
+    primary_labels = [event_labels[i] for i in primary_idx]
+    class_distribution = pct_to_counts(class_percentages, primary_labels, round_method="round")
+    print("Class distribution used for EVENT split (prima degli override):", class_distribution)
+
+    forced_split: Dict[int, str] = {
+        i: event_split_override[i] for i in primary_idx if event_split_override[i]
+    }
+
+    for i, split_name in forced_split.items():
+        cls = event_labels[i]
+        dist = class_distribution.setdefault(cls, {"train": 0, "val": 0, "test": 0})
+        dist[split_name] -= 1
+        if dist[split_name] < 0:
+            print(
+                f"[ATTENZIONE] Classe {cls}: gli override Excel richiedono piu' eventi in "
+                f"'{split_name}' di quanti ne restino nel target calcolato da "
+                f"dataset.split.class_percentages. Target clampato a 0."
+            )
+            dist[split_name] = 0
+
+    free_idx = [i for i in primary_idx if i not in forced_split]
+    free_labels = [event_labels[i] for i in free_idx]
+
+    free_train_pos, free_val_pos, free_test_pos = split_by_class_distribution(
+        free_labels, class_distribution, shuffle=True, seed=seed
+    )
+
+    split_of: Dict[int, str] = {}
+    for pos in free_train_pos:
+        split_of[free_idx[pos]] = "train"
+    for pos in free_val_pos:
+        split_of[free_idx[pos]] = "val"
+    for pos in free_test_pos:
+        split_of[free_idx[pos]] = "test"
+    split_of.update(forced_split)
+
+    name_to_primary_idx = {event_names[i]: i for i in primary_idx}
+    for i in flipped_idx:
+        base_name = event_names[i][: -len(_FLIPPED_SUFFIX)]
+        base_i = name_to_primary_idx.get(base_name)
+        if base_i is None:
+            raise ValueError(
+                f"Evento flipped '{event_names[i]}' senza evento base corrispondente '{base_name}'."
+            )
+        split_of[i] = split_of[base_i]
+
+    train_event_idx = [i for i, s in split_of.items() if s == "train"]
+    val_event_idx = [i for i, s in split_of.items() if s == "val"]
+    test_event_idx = [i for i, s in split_of.items() if s == "test"]
+    return train_event_idx, val_event_idx, test_event_idx
 
 
 def save_split_assignments(split_info: Optional[Dict[str, Dict[str, Any]]], out_path) -> None:
@@ -132,7 +247,7 @@ def build_dataloaders(cfg: Dict[str, Any]):
         raise ValueError(f"Unsupported dataset.normalization.mode={normalization!r}. Use 'none'|'neg1pos1'|'standardize'.")
 
     scale_to_neg1_pos1 = normalization == "neg1pos1"
-    all_series, all_series_filenames, event_labels, event_names = _load_events(cfg)
+    all_series, all_series_filenames, event_labels, event_names, event_split_override = _load_events(cfg)
 
     if split_strategy == "by_class":
         all_inputs_list, all_targets_list, labels, input_fnames, target_fnames = _build_sequences_from_events(
@@ -184,13 +299,16 @@ def build_dataloaders(cfg: Dict[str, Any]):
 
     # ---- split train/val/test (default) ----
     # Split a livello EVENTO per evitare leakage (finestre dello stesso evento in split diversi).
-    class_distribution = pct_to_counts(split_cfg["class_percentages"], event_labels, round_method="round")
-
+    # Rispetta eventuali override espliciti da Excel e forza le varianti "_flipped"
+    # nello stesso split del loro evento base (vedi _split_events_train_val_test).
     seed = int(split_cfg.get("seed", 424))
-    train_event_idx, val_event_idx, test_event_idx = split_by_class_distribution(
-        event_labels, class_distribution, shuffle=True, seed=seed
+    train_event_idx, val_event_idx, test_event_idx = _split_events_train_val_test(
+        event_labels=event_labels,
+        event_names=event_names,
+        event_split_override=event_split_override,
+        class_percentages=split_cfg["class_percentages"],
+        seed=seed,
     )
-    print("Class distribution used for EVENT split:", class_distribution)
     report_split_coverage(train_event_idx, val_event_idx, test_event_idx, total_len=len(event_labels))
     # Sanity: nessuna sovrapposizione fra eventi dei vari split
     overlap_tv = set(train_event_idx).intersection(val_event_idx)

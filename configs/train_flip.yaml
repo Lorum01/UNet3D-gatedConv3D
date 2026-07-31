@@ -1,0 +1,61 @@
+mode: train
+
+paths:
+  dataset_dir: "C:/Archivio_Lorenzo/DOTTORATO/Dottorato/Progetti/SEVIRI DATASET VISUALIZATION/Dataset"
+  excel_path: "./EventsEtnaCLASS_Final.xlsx"
+
+dataset:
+  input_length: 4
+  prediction_length: 4
+  stride: 1
+  image_size: [100, 100]   # [H, W]
+  channels: 3
+  normalization:
+    mode: "neg1pos1"       # none | neg1pos1 | standardize
+    mean: null             # required only if mode: standardize (and split.strategy: by_class)
+    std: null
+  split:
+    strategy: "train_val_test"   # train_val_test | by_class
+    seed: 424
+    class_percentages:
+      1: {train: 0.7, val: 0.15, test: 0.15}
+      2: {train: 0.7, val: 0.15, test: 0.15}
+      3: {train: 0.7, val: 0.15, test: 0.15}
+      4: {train: 0.7, val: 0.15, test: 0.15}
+
+dataloader:
+  batch_size:
+    train: 4
+    val: 4
+    test: 4
+
+model:
+  unet:
+    in_channels: 3
+    base_channels: 32
+    num_levels: 5
+    out_channels: 64
+  stacked_conv:
+    hidden_dims: [64, 128, 256, 512]
+    kernel_size: 3
+    padding: 1
+  final_out_channels: 3
+
+train:
+  device: "cuda"
+  num_epochs: 250
+  lr: 1.0e-3
+  # Only takes effect if the machine actually exposes >1 CUDA GPU; otherwise ignored.
+  use_data_parallel: false
+  checkpoint:
+    dir: "Checkpoints_seviri"
+    interval: 10
+  early_stopping:
+    patience: 80
+  lr_scheduler:
+    patience: 12
+    factor: 0.5
+    threshold: 1.0e-4
+  loss:
+    alpha: 0.7
+  show_plots: false

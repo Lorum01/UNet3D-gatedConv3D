@@ -88,35 +88,53 @@ These rules come from `src/unet3d_gatedconv3d/data/input_utility.py`.
   - `T >= input_length + prediction_length`
   - and sequences are extracted with a sliding window with step `stride`.
 
-## Excel file layout (event classes)
+## Excel file layout (event classes + optional split override)
 
-The Excel file (default in configs: `./EventsEtnaCLASS_Final.xlsx`) is used to assign a **class** to each event.
+The Excel file (default in configs: `./EventsEtnaCLASS_Final.xlsx`) is used to assign a **class** to each event, and optionally to force a specific **train/val/test split**.
 
 These rules come from `src/unet3d_gatedconv3d/data/input_utility.py` and `src/unet3d_gatedconv3d/pipelines/prep_data.py`.
 
 - The sheet must contain a column named **`Class`** (case-sensitive).
-- Excel row **0** is assigned to the **first event** loaded from the dataset, row **1** to the second, etc.
-  - In practice: the row order must match the order of event folders after `sorted()`.
-- The number of rows must be **>=** the number of events (subfolders) in the dataset.
+- Excel row **0** is assigned to the **first "base" event folder** loaded from the dataset, row **1** to the second, etc.
+  - "Base" means: event folders **not** ending in `_flipped` (see below). Row order must match the order of base event folders after `sorted()`.
+  - The number of Excel rows must be **exactly equal** to the number of base event folders (a mismatch raises an error at load time).
 - Values in `Class` must be numeric (typically integers: `1, 2, 3, 4`, consistent with `dataset.split.class_percentages` in the configs).
+
+### `_flipped` event folders (augmented mirror variants)
+
+An event folder whose name ends in `_flipped` (e.g. `2021_03_12_flipped`) is treated as an augmented, mirrored copy of the base event with the same name minus the suffix (e.g. `2021_03_12`). These folders:
+
+- do **not** need their own Excel row — they automatically inherit the **class** of their base event;
+- always end up in the **same train/val/test split as their base event**, whatever that split turns out to be (explicit override or randomly assigned) — this prevents a series and its mirrored duplicate from leaking across splits.
+- if a `*_flipped` folder exists with no matching base folder (same name without the suffix), loading raises an error.
+
+### Optional `Split` column (force an event into a specific split)
+
+Add a column named **`Split`** to force a base event into a specific split instead of letting it participate in the normal `dataset.split.class_percentages` random split:
+
+- Accepted values (case-insensitive): `train`, `val`, `test`, or empty/blank.
+- Empty (the default for a row) means: no override, the event is split according to `dataset.split.class_percentages` as usual.
+- Only base events can carry an override; `_flipped` folders always mirror their base event's split (see above) regardless of this column.
+- If the overrides for a class/split consume more events than the target count computed from `class_percentages`, the remaining target is **clamped to 0** and a warning is printed (no error) — the random split just has fewer events left to place for that class/split.
 
 Minimal example:
 
-| (row) | Class |
-|------:|------:|
-| 0     | 3     |
-| 1     | 1     |
-| 2     | 1     |
-| ...   | ...   |
+| (row) | Class | Split |
+|------:|------:|------:|
+| 0     | 3     |       |
+| 1     | 1     | train |
+| 2     | 1     |       |
+| ...   | ...   | ...   |
 
-Tip: you can add extra columns (e.g. `EventName`) to document the mapping, but at the moment the code uses only `Class` and the **row order**.
+Tip: you can add extra columns (e.g. `EventName`) to document the mapping, but at the moment the code uses only `Class`, `Split`, and the **row order** (matched against base event folders only).
 
 ## Notes
 
 - `paths.dataset_dir` and `paths.excel_path` are configurable in the YAML files under `configs/`.
 - In inference you can choose which splits to run (test/val/train) via `infer.run.*` (config `inference.yaml`).
 - `train.use_data_parallel` wraps the model in `nn.DataParallel` only if the machine actually exposes more than one visible CUDA GPU; otherwise it's ignored (with a log message). Checkpoints are always saved as a plain (non-`DataParallel`) state_dict regardless of this setting, so a checkpoint trained on a multi-GPU machine loads the same way on a single-GPU/CPU one.
-- When `dataset.split.strategy: train_val_test`, every run (train or infer) writes a `split_assignments.csv` (columns: `event, class, split`) next to its output — in the checkpoint dir for training, in each active `test`/`val`/`train` results dir for inference — so you can always see which event folders ended up in which split. Not written for `split.strategy: by_class` (there's no train/val/test distinction there).
+- When `dataset.split.strategy: train_val_test`, `split_assignments.csv` (columns: `event, class, split`) is written to the checkpoint dir **before training starts** (right after the split is computed), so it's preserved even if training crashes or is interrupted; for inference it's written to each active `test`/`val`/`train` results dir. Not written for `split.strategy: by_class` (there's no train/val/test distinction there).
+- See "Excel file layout" above for the `_flipped` event convention and the optional `Split` column to force specific events into a given split.
 
 ## Normalization & visualization (`dataset.normalization` vs `infer.normalization_override`)
 

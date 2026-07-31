@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict
 
@@ -27,7 +28,19 @@ def run(cfg: Dict[str, Any], project_root: Path) -> None:
             raise ValueError("mode=train richiede dataset.split.strategy='train_val_test' (non 'by_class').")
         train_loader, val_loader, _test_loader = loaders
         tcfg = cfg["train"]
-        result = training_loop_with_validation_3d(
+        checkpoint_dir = project_root / tcfg["checkpoint"]["dir"]
+        if checkpoint_dir.exists():
+            # Evita di sovrascrivere una run precedente: stessa logica che prima viveva
+            # dentro training_loop_with_validation_3d, spostata qui perche' ora la cartella
+            # finale deve essere decisa PRIMA di scrivere split_assignments.csv (cosi' resta
+            # nella stessa cartella di training.log/metrics.csv/checkpoint, non in due diverse).
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            orig_dir = checkpoint_dir
+            checkpoint_dir = checkpoint_dir.parent / f"{checkpoint_dir.name}_{ts}"
+            print(f"Checkpoint directory '{orig_dir}' already exists. Using new directory: '{checkpoint_dir}'")
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        save_split_assignments(split_info, checkpoint_dir / "split_assignments.csv")
+        training_loop_with_validation_3d(
             model,
             train_loader,
             val_loader,
@@ -39,13 +52,12 @@ def run(cfg: Dict[str, Any], project_root: Path) -> None:
             factor=float(tcfg["lr_scheduler"]["factor"]),
             threshold=float(tcfg["lr_scheduler"]["threshold"]),
             checkpoint_interval=int(tcfg["checkpoint"]["interval"]),
-            checkpoint_dir=str(project_root / tcfg["checkpoint"]["dir"]),
+            checkpoint_dir=str(checkpoint_dir),
             alpha=float(tcfg["loss"]["alpha"]),
             lpips_input_mode=str(tcfg["loss"].get("lpips_input_mode", "none")),
             show_plots=bool(tcfg.get("show_plots", False)),
             use_data_parallel=bool(tcfg.get("use_data_parallel", False)),
         )
-        save_split_assignments(split_info, Path(result["checkpoint_dir"]) / "split_assignments.csv")
         return
 
     # infer

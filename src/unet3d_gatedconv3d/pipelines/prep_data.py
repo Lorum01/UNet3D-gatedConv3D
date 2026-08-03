@@ -318,6 +318,31 @@ def build_dataloaders(cfg: Dict[str, Any]):
         print(f"[ATTENZIONE] Overlap eventi fra split: train∩val={len(overlap_tv)}, train∩test={len(overlap_tt)}, val∩test={len(overlap_vt)}")
     print(f"Eventi per split: train={len(train_event_idx)} val={len(val_event_idx)} test={len(test_event_idx)}")
 
+    # Inferenza su un numero scelto di EVENTI interi (non finestre/campioni): se
+    # cfg['infer']['events'] = {train: N, val: N, test: N} e' presente, tiene solo i
+    # primi N eventi di ogni split (stesso ordine di _split_events_train_val_test) e
+    # tutte le finestre generate da quegli eventi finiscono nell'inferenza.
+    events_limit = (cfg.get("infer") or {}).get("events") if str(cfg.get("mode", "")).lower() == "infer" else None
+    if events_limit:
+        def _limit_events(idx_list, n, split_name):
+            if n is None:
+                return idx_list
+            n = int(n)
+            selected = idx_list[:n]
+            if len(selected) < n:
+                print(f"[ATTENZIONE] Richiesti {n} eventi per split '{split_name}', disponibili solo {len(selected)}.")
+            return selected
+
+        train_event_idx = _limit_events(train_event_idx, events_limit.get("train"), "train")
+        val_event_idx = _limit_events(val_event_idx, events_limit.get("val"), "val")
+        test_event_idx = _limit_events(test_event_idx, events_limit.get("test"), "test")
+        print(
+            "[INFO] Eventi selezionati per inferenza (infer.events): "
+            f"train={[event_names[i] for i in train_event_idx]}, "
+            f"val={[event_names[i] for i in val_event_idx]}, "
+            f"test={[event_names[i] for i in test_event_idx]}"
+        )
+
     # Mappatura evento (nome cartella) -> {classe, split}, cosi' si puo' sempre
     # risalire a quali eventi sono finiti in train/val/test (vedi save_split_assignments).
     split_info: Dict[str, Dict[str, Any]] = {}

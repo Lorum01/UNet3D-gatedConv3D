@@ -1,0 +1,77 @@
+mode: infer
+
+paths:
+  dataset_dir: "./Dataset"
+  excel_path: "./EventsEtnaCLASS_Final.xlsx"
+
+dataset:
+  input_length: 4
+  prediction_length: 4
+  stride: 1
+  image_size: [100, 100]   # [H, W]
+  channels: 3
+  normalization:
+    mode: "neg1pos1"       # deve combaciare con train_flip.yaml
+    mean: null
+    std: null
+  split:
+    strategy: "train_val_test"   # stesso seed/percentuali di train_flip.yaml -> stesso identico split
+    seed: 424
+    class_percentages:
+      1: {train: 0.7, val: 0.15, test: 0.15}
+      2: {train: 0.7, val: 0.15, test: 0.15}
+      3: {train: 0.7, val: 0.15, test: 0.15}
+      4: {train: 0.7, val: 0.15, test: 0.15}
+
+dataloader:
+  batch_size:
+    train: 4
+    val: 4
+    test: 4
+
+model:
+  unet:
+    in_channels: 3
+    base_channels: 32
+    num_levels: 5
+    out_channels: 64
+  stacked_conv:
+    hidden_dims: [64, 128, 256, 512]
+    kernel_size: 3
+    padding: 1
+  final_out_channels: 3
+
+infer:
+  device: "cuda"
+  checkpoint_path: "./Checkpoints_flip/best_model.pth"
+  # Alto a sufficienza da coprire TUTTE le finestre generate dagli eventi
+  # selezionati sotto (non e' un limite reale col numero di eventi cosi' basso).
+  max_batches: 1000
+  gif_fps: 2
+  normalization_override:
+    mean: null
+    std: null
+    denorm_from_neg1_pos1: true
+
+  # Tiene solo i primi N eventi (cartelle) di ogni split (stesso ordine dello
+  # split train/val/test); ogni evento tenuto viene mandato in inferenza per
+  # intero, cioe' con TUTTE le finestre generate al suo interno.
+  events:
+    train: 2
+    val: 2
+    test: 10
+
+  save:
+    images: true
+    gifs: true
+    show_plots: false
+    dirs:
+      test: "Model_Results/Model_Results_flip/test"
+      val: "Model_Results/Model_Results_flip/val"
+      train: "Model_Results/Model_Results_flip/train"
+
+  # inferenza sui 2 eventi di train, 2 di validation, 10 di test scelti sopra
+  run:
+    test: true
+    val: true
+    train: true

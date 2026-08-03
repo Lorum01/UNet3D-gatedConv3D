@@ -1,7 +1,7 @@
 mode: train
 
 paths:
-  dataset_dir: "C:/Archivio_Lorenzo/DOTTORATO/Dottorato/Progetti/SEVIRI DATASET VISUALIZATION/Dataset"
+  dataset_dir: "./Dataset"
   excel_path: "./EventsEtnaCLASS_Final.xlsx"
 
 dataset:
@@ -48,7 +48,7 @@ train:
   # Only takes effect if the machine actually exposes >1 CUDA GPU; otherwise ignored.
   use_data_parallel: false
   checkpoint:
-    dir: "Checkpoints_seviri"
+    dir: "./Checkpoints_flip"
     interval: 10
   early_stopping:
     patience: 80

@@ -1,4 +1,5 @@
 import os
+import time
 from typing import Sequence, Optional, Tuple, List
 
 import matplotlib.pyplot as plt
@@ -69,6 +70,43 @@ def frames_to_gif(frames_chw: List[np.ndarray], gif_path: str, fps: int) -> None
     frames_rgb = [as_rgb_uint8(frame) for frame in frames_chw]
     duration = 1.0 / max(fps, 1)
     imageio.mimsave(gif_path, frames_rgb, duration=duration)
+
+
+def load_checkpoint(model: torch.nn.Module, checkpoint_path: Optional[str], device: torch.device) -> torch.nn.Module:
+    """Load `checkpoint_path` into `model` in-place (compat remapping included) and return it."""
+    if not checkpoint_path:
+        return model
+
+    state = torch.load(checkpoint_path, map_location=device)
+    if not isinstance(state, dict):
+        raise ValueError(f"Checkpoint at {checkpoint_path!r} did not contain a state_dict.")
+
+    # Compatibility mapping: some legacy checkpoints use attribute name `convlstm`
+    # while the current model uses `stackedConv`. Detect and remap keys.
+    if any('convlstm' in k for k in state):
+        state = {k.replace('convlstm', 'stackedConv'): v for k, v in state.items()}
+
+    # Normalize DataParallel-style `module.` prefixes so both legacy checkpoints
+    # (trained with nn.DataParallel, keys prefixed) and current checkpoints
+    # (trained bare, no prefix) load into this bare (non-DataParallel) model.
+    ckpt_keys = list(state.keys())
+    has_module_prefix = bool(ckpt_keys) and all(k.startswith('module.') for k in ckpt_keys)
+    if has_module_prefix:
+        state = {k[len('module.'):]: v for k, v in state.items()}
+
+    missing, unexpected = model.load_state_dict(state, strict=False)
+    if missing or unexpected:
+        print(
+            f"[WARN] Checkpoint '{checkpoint_path}' loaded with mismatches: "
+            f"{len(missing)} missing key(s), {len(unexpected)} unexpected key(s)."
+        )
+        if missing:
+            print(f"  missing (first 5): {missing[:5]}")
+        if unexpected:
+            print(f"  unexpected (first 5): {unexpected[:5]}")
+    else:
+        print(f"[OK] Checkpoint '{checkpoint_path}' loaded (all keys matched).")
+    return model
 
 
 def ensure_bcthw(x: torch.Tensor, *, expected_channels: int = 3, name: str = "tensor") -> torch.Tensor:
@@ -145,42 +183,15 @@ def test_model_create_gifs_3ch(
     device = torch.device(device) if not isinstance(device, torch.device) else device
     model = model.to(device)
 
-    if checkpoint_path:
-        state = torch.load(checkpoint_path, map_location=device)
-        if not isinstance(state, dict):
-            raise ValueError(f"Checkpoint at {checkpoint_path!r} did not contain a state_dict.")
-
-        # Compatibility mapping: some legacy checkpoints use attribute name `convlstm`
-        # while the current model uses `stackedConv`. Detect and remap keys.
-        if any('convlstm' in k for k in state):
-            state = {k.replace('convlstm', 'stackedConv'): v for k, v in state.items()}
-
-        # Normalize DataParallel-style `module.` prefixes so both legacy checkpoints
-        # (trained with nn.DataParallel, keys prefixed) and current checkpoints
-        # (trained bare, no prefix) load into this bare (non-DataParallel) model.
-        ckpt_keys = list(state.keys())
-        has_module_prefix = bool(ckpt_keys) and all(k.startswith('module.') for k in ckpt_keys)
-        if has_module_prefix:
-            state = {k[len('module.'):]: v for k, v in state.items()}
-
-        missing, unexpected = model.load_state_dict(state, strict=False)
-        if missing or unexpected:
-            print(
-                f"[WARN] Checkpoint '{checkpoint_path}' loaded with mismatches: "
-                f"{len(missing)} missing key(s), {len(unexpected)} unexpected key(s)."
-            )
-            if missing:
-                print(f"  missing (first 5): {missing[:5]}")
-            if unexpected:
-                print(f"  unexpected (first 5): {unexpected[:5]}")
-        else:
-            print(f"[OK] Checkpoint '{checkpoint_path}' loaded (all keys matched).")
+    model = load_checkpoint(model, checkpoint_path, device)
     model.eval()
 
     denorm = build_denorm(mean, std, device, scale_to_neg1_pos1=scale_to_neg1_pos1)
 
     # --------------------------- Main Loop ---------------------------
     batch_count = 0
+    inference_times: List[float] = []
+    total_start = time.perf_counter()
     with torch.no_grad():
         for batch in test_loader:
             batch_count += 1
@@ -203,6 +214,7 @@ def test_model_create_gifs_3ch(
             targets = to_device(targets, device)
 
             # ------------------- 1ª inferenza -------------------
+            series_start = time.perf_counter()
             pred1 = model(data)  # (B,3,4,H,W)
 
             # Prepara input per la 2ª inferenza (ancora normalizzato)
@@ -212,6 +224,9 @@ def test_model_create_gifs_3ch(
 
             # ------------------- 2ª inferenza -------------------
             pred2 = model(new_input)                 # (B,3,4,H,W)
+            series_elapsed = time.perf_counter() - series_start
+            inference_times.append(series_elapsed)
+            print(f"[timing] Serie di inferenza {batch_count}: {series_elapsed:.3f}s")
             first2_pred2 = pred2[:, :, :2, :, :]     # (B,3,2,H,W)
 
             # Predizione modificata (4 frame): concat dei primi 2 di pred1 e dei primi 2 di pred2
@@ -241,8 +256,16 @@ def test_model_create_gifs_3ch(
                 input_fnames_i  = input_fnames_batch[i]  if input_fnames_batch  is not None else None  # len=T_in
                 target_fnames_i = target_fnames_batch[i] if target_fnames_batch is not None else None   # len=T_out
 
+                # Nome della cartella evento originale (es. "2011_04_10", data dell'evento)
+                # ricavato dalla directory padre del primo frame di input; ogni evento ha
+                # cosi' la propria sottocartella con tutti i suoi sample.
+                event_name = (
+                    os.path.basename(os.path.dirname(input_fnames_i[0]))
+                    if input_fnames_i is not None else "unknown_event"
+                )
+
                 sample_idx = f"batch{batch_count}_sample{i}_label{label_i}"
-                sample_dir = os.path.join(save_dir, f"sample_{sample_idx}")
+                sample_dir = os.path.join(save_dir, event_name, f"sample_{sample_idx}")
                 ensure_dir(sample_dir)
 
                 # Trasponi a (T, C, H, W)
@@ -382,6 +405,12 @@ def test_model_create_gifs_3ch(
                 else:
                     plt.close(fig_out)
 
-    print("\n== Test completato (IMMAGINI + GIF + NPY/JPG, naming basato sui filename originali) ==\n")
+    total_elapsed = time.perf_counter() - total_start
+    avg_series_time = sum(inference_times) / len(inference_times) if inference_times else 0.0
+    print("\n== Test completato (IMMAGINI + GIF + NPY/JPG, naming basato sui filename originali) ==")
+    print(
+        f"[timing] Tempo totale: {total_elapsed:.2f}s su {len(inference_times)} serie di inferenza "
+        f"(media: {avg_series_time:.3f}s/serie)\n"
+    )
 
 

@@ -137,6 +137,15 @@ def _defaults() -> Dict[str, Any]:
                 "val": False,
                 "train": False,
             },
+            "metrics": {
+                # Se True, oltre a immagini/GIF calcola e salva (metrics.csv per split)
+                # la loss combinata MSE+LPIPS (stesso alpha/lpips_input_mode di train.loss)
+                # e SSIM/PSNR/MSE, sui rami "pred" (diretto) e "predm" (autoregressivo).
+                "enabled": True,
+                # None = valuta l'intero split; altrimenti limita il numero di batch
+                # (indipendente da infer.max_batches, che riguarda solo immagini/GIF).
+                "max_batches": None,
+            },
         },
     }
 

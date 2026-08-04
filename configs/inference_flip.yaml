@@ -56,19 +56,20 @@ infer:
   # Tiene solo i primi N eventi (cartelle) di ogni split (stesso ordine dello
   # split train/val/test); ogni evento tenuto viene mandato in inferenza per
   # intero, cioe' con TUTTE le finestre generate al suo interno.
+  # se imposto a null, prende tutti gli eventi (cartelle) di quello split.
   events:
-    train: 2
-    val: 2
-    test: 10
+    train: null
+    val: null
+    test: null
 
   save:
     images: true
     gifs: true
     show_plots: false
     dirs:
-      test: "Model_Results/Model_Results_flip/test"
-      val: "Model_Results/Model_Results_flip/val"
-      train: "Model_Results/Model_Results_flip/train"
+      test: "Model_Results/Model_Results_flip_whole_dataset/test"
+      val: "Model_Results/Model_Results_flip_whole_dataset/val"
+      train: "Model_Results/Model_Results_flip_whole_dataset/train"
 
   # inferenza sui 2 eventi di train, 2 di validation, 10 di test scelti sopra
   run:

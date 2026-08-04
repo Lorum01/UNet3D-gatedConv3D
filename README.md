@@ -17,6 +17,7 @@ When running inference, the runner also saves in the results folder:
 - the console output log (`run_YYYYMMDD-HHMMSS.log`)
 - the config file passed via `--config` (copied as-is)
 - the resolved/merged config actually used (`config_resolved.yaml`)
+- (if `infer.metrics.enabled`, default on) a `metrics.csv` per active split — see "Metrics" below
 
 ## Config file structure
 
@@ -41,8 +42,10 @@ train:                 device, num_epochs, lr, use_data_parallel
   show_plots
 infer:                 device, checkpoint_path, max_batches, gif_fps
   normalization_override: mean, std, denorm_from_neg1_pos1  (all null = derive from dataset.normalization)
+  events:                train, val, test  (limit inference to the first N events of each split; null/omit = all)
   save:                 images, gifs, show_plots, dirs: {test, val, train, by_class_root}
   run:                  test, val, train
+  metrics:               enabled, max_batches  (see "Metrics" below)
 ```
 
 Any field you omit falls back to the defaults in `src/unet3d_gatedconv3d/config.py`. `dataset.mean`/`dataset.std` (nested under `dataset.normalization`) and `infer.normalization_override.*` are the only fields whose requirement depends on other fields — see "Normalization" below.
@@ -157,3 +160,38 @@ There are two separate concerns:
   - in `dataset.split.strategy: train_val_test`, mean/std are computed on the **train split** automatically and applied to train/val/test (the `dataset.normalization.mean`/`std` values in the config are ignored in this case);
   - in `dataset.split.strategy: by_class`, there is no train split, so `dataset.normalization.mean` and `dataset.normalization.std` are **required** in the config.
 - `infer.normalization_override.denorm_from_neg1_pos1` is meaningful only when the dataset uses `neg1pos1`; for `standardize`, visualization should use `infer.normalization_override.mean`/`std` instead.
+
+## Limiting inference to specific events (`infer.events`)
+
+`infer.events: {train, val, test}` limits inference (images/GIFs and metrics) to the **first N events** of each split, in the same deterministic order produced by the train/val/test split (depends on `dataset.split.seed`/`class_percentages`, plus any Excel `Split` overrides). Each kept event is processed **in full** (every window it generates), not just N windows. Set a value to `null` (or omit the split) to run on the **entire** split instead. Only applies when `mode: infer`; ignored in training.
+
+The exact events selected are always printed to the log:
+```
+[INFO] Eventi selezionati per inferenza (infer.events): train=[...], val=[...], test=['2021_06_25']
+```
+There is currently no way to select an event **by name** — only by position/count. To target one specific event, either set the count high enough (or `null`) to include it and then look at its own subfolder in the results dir (results are grouped one subfolder per event name), or reduce `dataset.split.class_percentages`/reorder the dataset so it lands first.
+
+## Metrics (`metrics.csv`)
+
+If `infer.metrics.enabled` (default `true`), for every active split (`test`/`val`/`train`, or per class in `by_class` mode) the runner also computes numeric metrics — not just images/GIFs — and writes them to `metrics.csv` in that split's results folder (implementation: `src/unet3d_gatedconv3d/inference/metrics.py`, function `evaluate_metrics_3d`).
+
+- `infer.metrics.max_batches`: optional cap on the number of batches evaluated (`null` = the whole loader, i.e. the whole split, or the whole subset already restricted by `infer.events`). Independent from `infer.max_batches`, which only limits how many batches get images/GIFs.
+
+**What is compared:** for every batch, the model runs the same 2-step autoregressive inference used for the GIFs, producing two branches, each compared frame-by-frame against the ground-truth `targets` from the loader:
+- `pred`: direct prediction (4 input frames → 4 output frames, one forward pass).
+- `predm`: modified/autoregressive prediction — frames `t0,t1` come from `pred`'s first pass; frames `t2,t3` come from a second forward pass whose input is the last 2 input frames + `pred`'s first 2 output frames fed back in. This branch shows how error compounds when the model's own predictions are reused as input.
+
+For each branch, `metrics.csv` reports, per output timestep (`t0`..`t3`) and as a `mean` over the 4 timesteps:
+
+| metric | space | formula |
+|---|---|---|
+| `mse` | denormalized to `[0,1]` (same space used to save images) | `MSE = mean((pred - target)^2)` |
+| `psnr` | denormalized to `[0,1]`, `data_range=1.0` | `PSNR = 10 * log10(1 / MSE)` (dB, higher is better) |
+| `ssim` | denormalized to `[0,1]`, `data_range=1.0`, gaussian window 11x11, σ=1.5, k1=0.01, k2=0.03 (Wang et al. 2004, via `torchmetrics`) | `SSIM = [(2·μx·μy+C1)(2·σxy+C2)] / [(μx²+μy²+C1)(σx²+σy²+C2)]`, range `[-1,1]`, 1 = identical |
+| `combined_loss` | **normalized** tensors (same space as training, e.g. `[-1,1]` for `neg1pos1`) — one value, not per-timestep | `alpha * MSE(out, target) + (1 - alpha) * LPIPS(out, target)`, same `weighted_mse_lpips_loss` used in `train_loop.py`, `alpha` taken from `train.loss.alpha` (default `0.7`) and `lpips_input_mode` from `train.loss.lpips_input_mode` |
+
+Notes:
+- `mse`/`psnr`/`ssim` are sample-weighted averages over the whole evaluated set (weighted by each batch's size). `combined_loss` is averaged per-batch, matching the convention already used for `train_loss`/`val_loss` during training.
+- The `mse` column in `metrics.csv` and the MSE term inside `combined_loss` are **not the same number** — same name, different space (denormalized `[0,1]` vs normalized), by design: `combined_loss` must stay comparable to training/validation loss, while `mse`/`psnr`/`ssim` must be interpretable in "visible image" space.
+- LPIPS itself has no closed-form formula here — it's the output of a pretrained AlexNet (`lpips` package, Zhang et al. 2018) with learned per-channel linear weights on normalized deep features, averaged over the sequence's frames.
+- All values in `metrics.csv` are rounded to 3 decimal places for readability.

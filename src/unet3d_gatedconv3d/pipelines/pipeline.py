@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict
@@ -7,8 +8,50 @@ from typing import Any, Dict
 from ..models.model import build_model
 from ..training.train_loop import training_loop_with_validation_3d
 from ..inference.test_utility import test_model_create_gifs_3ch
+from ..inference.metrics import evaluate_metrics_3d, save_metrics_csv
 
 from .prep_data import build_dataloaders, save_split_assignments
+
+
+def _run_metrics_for_split(
+    *,
+    model,
+    loader,
+    device: str,
+    out_dir: Path,
+    alpha: float,
+    lpips_input_mode: str,
+    mean,
+    std,
+    scale_to_neg1_pos1: bool,
+    checkpoint_path: str,
+    max_batches,
+    split_name: str,
+) -> None:
+    """Calcola loss combinata MSE+LPIPS + SSIM/PSNR/MSE (rami pred/predm) e salva metrics.csv."""
+    metrics = evaluate_metrics_3d(
+        model=model,
+        dataloader=loader,
+        device=device,
+        alpha=alpha,
+        lpips_input_mode=lpips_input_mode,
+        mean=mean,
+        std=std,
+        scale_to_neg1_pos1=scale_to_neg1_pos1,
+        checkpoint_path=checkpoint_path,
+        max_batches=max_batches,
+    )
+    out_dir.mkdir(parents=True, exist_ok=True)
+    save_metrics_csv(metrics, str(out_dir / "metrics.csv"))
+    for branch in ("pred", "predm"):
+        if branch not in metrics:
+            continue
+        b = metrics[branch]
+        print(
+            f"[metrics][{split_name}][{branch}] combined_loss(alpha={alpha})={b['combined_loss']:.4f} "
+            f"ssim={b['ssim']['mean']:.4f} psnr={b['psnr']['mean']:.2f}dB mse={b['mse']['mean']:.6f} "
+            f"(n_samples={metrics['n_samples']})"
+        )
 
 
 def run(cfg: Dict[str, Any], project_root: Path) -> None:
@@ -83,6 +126,14 @@ def run(cfg: Dict[str, Any], project_root: Path) -> None:
     override_mean = norm_override.get("mean", None)
     override_std = norm_override.get("std", None)
 
+    loss_cfg = cfg.get("train", {}).get("loss", {})
+    metrics_cfg = icfg.get("metrics", {})
+    metrics_enabled = bool(metrics_cfg.get("enabled", True))
+    metrics_alpha = float(loss_cfg.get("alpha", 0.7))
+    metrics_lpips_input_mode = str(loss_cfg.get("lpips_input_mode", "none"))
+    metrics_max_batches = metrics_cfg.get("max_batches")
+    metrics_max_batches = int(metrics_max_batches) if metrics_max_batches is not None else None
+
     # Caso richiesto: inferenza raggruppata per classe (da Excel), senza split train/val/test
     if isinstance(loaders, dict):
         by_class_root = str(project_root / save_dirs.get("by_class_root", "Model_Results_1/by_class"))
@@ -103,14 +154,37 @@ def run(cfg: Dict[str, Any], project_root: Path) -> None:
                 save_gifs=bool(save_cfg["gifs"]),
                 show_plots=bool(save_cfg["show_plots"]),
             )
+            if metrics_enabled:
+                _run_metrics_for_split(
+                    model=model,
+                    loader=loader,
+                    device=device,
+                    out_dir=Path(out_dir),
+                    alpha=metrics_alpha,
+                    lpips_input_mode=metrics_lpips_input_mode,
+                    mean=override_mean,
+                    std=override_std,
+                    scale_to_neg1_pos1=denorm_from_neg1_pos1,
+                    checkpoint_path=resolved_ckpt,
+                    max_batches=metrics_max_batches,
+                    split_name=f"class_{class_id}",
+                )
         return
 
     train_loader, val_loader, test_loader = loaders
     run_cfg = icfg.get("run", {})
 
+    # split_assignments.csv scritto UNA sola volta nella cartella comune a
+    # test/val/train (non duplicato in ognuna delle sottocartelle di split).
+    results_root = Path(os.path.commonpath([
+        str((project_root / save_dirs.get("test", "Model_Results_1/test")).resolve()),
+        str((project_root / save_dirs.get("val", "Model_Results_1/val")).resolve()),
+        str((project_root / save_dirs.get("train", "Model_Results_1/train")).resolve()),
+    ]))
+    save_split_assignments(split_info, results_root / "split_assignments.csv")
+
     if bool(run_cfg.get("test", True)):
         test_dir = project_root / save_dirs.get("test", "Model_Results_1/test")
-        save_split_assignments(split_info, test_dir / "split_assignments.csv")
         test_model_create_gifs_3ch(
             model=model,
             test_loader=test_loader,
@@ -126,10 +200,24 @@ def run(cfg: Dict[str, Any], project_root: Path) -> None:
             save_gifs=bool(save_cfg["gifs"]),
             show_plots=bool(save_cfg["show_plots"]),
         )
+        if metrics_enabled:
+            _run_metrics_for_split(
+                model=model,
+                loader=test_loader,
+                device=device,
+                out_dir=test_dir,
+                alpha=metrics_alpha,
+                lpips_input_mode=metrics_lpips_input_mode,
+                mean=override_mean,
+                std=override_std,
+                scale_to_neg1_pos1=denorm_from_neg1_pos1,
+                checkpoint_path=resolved_ckpt,
+                max_batches=metrics_max_batches,
+                split_name="test",
+            )
 
     if bool(run_cfg.get("val", False)):
         val_dir = project_root / save_dirs.get("val", "Model_Results_1/val")
-        save_split_assignments(split_info, val_dir / "split_assignments.csv")
         test_model_create_gifs_3ch(
             model=model,
             test_loader=val_loader,
@@ -145,10 +233,24 @@ def run(cfg: Dict[str, Any], project_root: Path) -> None:
             save_gifs=bool(save_cfg["gifs"]),
             show_plots=bool(save_cfg["show_plots"]),
         )
+        if metrics_enabled:
+            _run_metrics_for_split(
+                model=model,
+                loader=val_loader,
+                device=device,
+                out_dir=val_dir,
+                alpha=metrics_alpha,
+                lpips_input_mode=metrics_lpips_input_mode,
+                mean=override_mean,
+                std=override_std,
+                scale_to_neg1_pos1=denorm_from_neg1_pos1,
+                checkpoint_path=resolved_ckpt,
+                max_batches=metrics_max_batches,
+                split_name="val",
+            )
 
     if bool(run_cfg.get("train", False)):
         train_dir = project_root / save_dirs.get("train", "Model_Results_1/train")
-        save_split_assignments(split_info, train_dir / "split_assignments.csv")
         test_model_create_gifs_3ch(
             model=model,
             test_loader=train_loader,
@@ -164,3 +266,18 @@ def run(cfg: Dict[str, Any], project_root: Path) -> None:
             save_gifs=bool(save_cfg["gifs"]),
             show_plots=bool(save_cfg["show_plots"]),
         )
+        if metrics_enabled:
+            _run_metrics_for_split(
+                model=model,
+                loader=train_loader,
+                device=device,
+                out_dir=train_dir,
+                alpha=metrics_alpha,
+                lpips_input_mode=metrics_lpips_input_mode,
+                mean=override_mean,
+                std=override_std,
+                scale_to_neg1_pos1=denorm_from_neg1_pos1,
+                checkpoint_path=resolved_ckpt,
+                max_batches=metrics_max_batches,
+                split_name="train",
+            )

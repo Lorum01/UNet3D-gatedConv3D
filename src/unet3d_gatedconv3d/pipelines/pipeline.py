@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import os
+import shutil
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
+
+import yaml
 
 from ..models.model import build_model
 from ..training.train_loop import training_loop_with_validation_3d
@@ -54,7 +57,15 @@ def _run_metrics_for_split(
         )
 
 
-def run(cfg: Dict[str, Any], project_root: Path) -> None:
+def _save_run_config(config_path: Optional[Path], cfg: Dict[str, Any], out_dir: Path) -> None:
+    """Salva il config usato per la run (raw + risolto) dentro out_dir."""
+    if config_path is not None and Path(config_path).exists():
+        shutil.copy2(str(config_path), str(out_dir / Path(config_path).name))
+    with open(out_dir / "config_resolved.yaml", "w", encoding="utf-8") as f:
+        yaml.safe_dump(cfg, f, sort_keys=False, allow_unicode=True)
+
+
+def run(cfg: Dict[str, Any], project_root: Path, config_path: Optional[Path] = None) -> None:
     mode = (cfg.get("mode") or "train").lower().strip()
     if mode not in {"train", "infer"}:
         raise ValueError(f"Unsupported mode={mode!r}. Expected 'train' or 'infer'.")
@@ -82,6 +93,7 @@ def run(cfg: Dict[str, Any], project_root: Path) -> None:
             checkpoint_dir = checkpoint_dir.parent / f"{checkpoint_dir.name}_{ts}"
             print(f"Checkpoint directory '{orig_dir}' already exists. Using new directory: '{checkpoint_dir}'")
         checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        _save_run_config(config_path, cfg, checkpoint_dir)
         save_split_assignments(split_info, checkpoint_dir / "split_assignments.csv")
         training_loop_with_validation_3d(
             model,

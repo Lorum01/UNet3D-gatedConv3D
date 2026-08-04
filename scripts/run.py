@@ -149,12 +149,12 @@ def main() -> None:
             print(f"[run] Output dir(s): {', '.join(str(p) for p in output_dirs)}")
             print(f"[run] Shared artifacts (config/log/csv): {results_root}")
             print("")
-            run(cfg, project_root=PROJECT_ROOT)
+            run(cfg, project_root=PROJECT_ROOT, config_path=config_path)
             print("")
             print(f"[run] Finished. Log saved to: {log_path}")
         return
 
-    run(cfg, project_root=PROJECT_ROOT)
+    run(cfg, project_root=PROJECT_ROOT, config_path=config_path)
 
 
 if __name__ == "__main__":

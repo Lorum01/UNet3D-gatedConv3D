@@ -33,22 +33,22 @@ model:
   unet:
     in_channels: 3
     base_channels: 32
-    num_levels: 5
+    num_levels: 6
     out_channels: 64
   stacked_conv:
-    hidden_dims: [64, 128, 256, 512]
+    hidden_dims: [64, 128, 256, 512, 1024]
     kernel_size: 3
     padding: 1
   final_out_channels: 3
 
 train:
-  device: "cuda:1"
+  device: "cuda:0"
   num_epochs: 250
   lr: 1.0e-3
   # Only takes effect if the machine actually exposes >1 CUDA GPU; otherwise ignored.
   use_data_parallel: false
   checkpoint:
-    dir: "./Checkpoints_flip_alfa_1"
+    dir: "./Checkpoints_flip_high"
     interval: 10
   early_stopping:
     patience: 80
@@ -57,5 +57,5 @@ train:
     factor: 0.5
     threshold: 1.0e-4
   loss:
-    alpha: 1
+    alpha: 0.7
   show_plots: false

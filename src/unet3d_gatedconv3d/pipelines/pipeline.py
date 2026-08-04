@@ -51,7 +51,7 @@ def _run_metrics_for_split(
             continue
         b = metrics[branch]
         print(
-            f"[metrics][{split_name}][{branch}] combined_loss(alpha={alpha})={b['combined_loss']:.4f} "
+            f"[metrics][{split_name}][{branch}] combined_loss(alpha={alpha})={b['combined_loss']['mean']:.4f} "
             f"ssim={b['ssim']['mean']:.4f} psnr={b['psnr']['mean']:.2f}dB mse={b['mse']['mean']:.6f} "
             f"(n_samples={metrics['n_samples']})"
         )

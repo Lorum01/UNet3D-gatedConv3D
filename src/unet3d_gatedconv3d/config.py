@@ -77,6 +77,14 @@ def _defaults() -> Dict[str, Any]:
             "device": "cuda",
             "num_epochs": 250,
             "lr": 1e-3,
+            # Seed per l'inizializzazione dei pesi del modello e per lo shuffle dei
+            # batch di training (torch/random/numpy). NON influisce sullo split
+            # train/val/test, che dipende esclusivamente da dataset.split.seed:
+            # tenendo dataset.split.seed fisso e facendo variare train.seed tra piu'
+            # run si ottengono modelli diversi (pesi iniziali/ordine batch diversi)
+            # valutati esattamente sugli stessi identici split. Se null, non viene
+            # fissato alcun seed (comportamento non riproducibile, come prima).
+            "seed": None,
             # If True, wrap the model in nn.DataParallel *when the machine actually has
             # more than one visible CUDA GPU*. On a single-GPU/CPU machine this is a no-op.
             "use_data_parallel": False,

@@ -3,7 +3,8 @@ from __future__ import annotations
 import csv
 import math
 import os
-from typing import Any, Dict, Optional, Sequence
+import statistics
+from typing import Any, Dict, Optional, Sequence, Tuple
 
 import torch
 import torch.nn.functional as F
@@ -186,3 +187,73 @@ def save_metrics_csv(metrics: Dict[str, Any], csv_path: str) -> None:
             for metric_name in ("combined_loss", "mse", "psnr", "ssim"):
                 row = metrics[branch][metric_name]
                 writer.writerow([branch, metric_name] + [_fmt(row[k]) for k in t_keys] + [_fmt(row["mean"])])
+
+
+def aggregate_metrics_across_seeds(
+    seed_csv_paths: Dict[int, str],
+    out_csv_path: str,
+) -> Dict[str, Dict[str, Dict[str, Dict[str, float]]]]:
+    """
+    Aggrega piu' metrics.csv (uno per ogni run di training con train.seed diverso ma
+    stesso identico dataset.split.seed, quindi stesso split) calcolando media e
+    deviazione standard CAMPIONARIA (ddof=1; 0.0 se un solo seed disponibile) tra i
+    seed, per ciascuna combinazione (branch, metric, colonna t0..t{T-1}/mean).
+
+    seed_csv_paths: {seed: path/to/metrics.csv}, ognuno nel formato scritto da
+    save_metrics_csv (una riga per branch/metric, colonne t0..t{T-1},mean).
+
+    Scrive out_csv_path con colonne branch,metric,stat,t0..t{T-1},mean: due righe per
+    (branch,metric), "seed_mean" e "seed_std". Ritorna lo stesso aggregato in memoria:
+    {branch: {metric: {column: {"seed_mean", "seed_std", "n_seeds"}}}}.
+    """
+    seeds = sorted(seed_csv_paths.keys())
+    if not seeds:
+        raise ValueError("seed_csv_paths e' vuoto: nessun seed da aggregare.")
+
+    per_seed_rows: Dict[int, Dict[Tuple[str, str], Dict[str, float]]] = {}
+    columns: list[str] = []
+    branch_metric_keys: list[Tuple[str, str]] = []
+
+    for seed in seeds:
+        with open(seed_csv_paths[seed], "r", newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            if not columns:
+                columns = [c for c in (reader.fieldnames or []) if c not in ("branch", "metric")]
+            rows: Dict[Tuple[str, str], Dict[str, float]] = {}
+            for row in reader:
+                key = (row["branch"], row["metric"])
+                rows[key] = {c: float(row[c]) for c in columns}
+                if key not in branch_metric_keys:
+                    branch_metric_keys.append(key)
+        per_seed_rows[seed] = rows
+
+    out_dir = os.path.dirname(out_csv_path)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+
+    aggregated: Dict[str, Dict[str, Dict[str, Dict[str, float]]]] = {}
+    with open(out_csv_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["# seeds", ",".join(str(s) for s in seeds), f"n={len(seeds)}"])
+        writer.writerow(["branch", "metric", "stat"] + columns)
+        for branch, metric in branch_metric_keys:
+            mean_row, std_row = [], []
+            for col in columns:
+                values = [
+                    per_seed_rows[s][(branch, metric)][col]
+                    for s in seeds
+                    if (branch, metric) in per_seed_rows[s]
+                ]
+                m = statistics.mean(values)
+                sd = statistics.stdev(values) if len(values) > 1 else 0.0
+                aggregated.setdefault(branch, {}).setdefault(metric, {})[col] = {
+                    "seed_mean": m,
+                    "seed_std": sd,
+                    "n_seeds": float(len(values)),
+                }
+                mean_row.append(f"{m:.4f}")
+                std_row.append(f"{sd:.4f}")
+            writer.writerow([branch, metric, "seed_mean"] + mean_row)
+            writer.writerow([branch, metric, "seed_std"] + std_row)
+
+    return aggregated

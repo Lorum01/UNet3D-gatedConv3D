@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import os
+import random
 import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+import numpy as np
+import torch
 import yaml
 
 from ..models.model import build_model
@@ -57,6 +60,27 @@ def _run_metrics_for_split(
         )
 
 
+def _seed_training_run(seed: Optional[int]) -> int:
+    """Fissa i RNG di Python/NumPy/Torch per l'inizializzazione dei pesi e lo shuffle
+    dei batch di training. Va chiamata DOPO build_dataloaders() (che ha gia' consumato
+    dataset.split.seed per calcolare lo split) e PRIMA di build_model(), cosi' che
+    dataset.split.seed resti l'unico responsabile dell'appartenenza degli eventi agli
+    split: variare train.seed tra piu' run non cambia lo split, solo pesi iniziali e
+    ordine dei batch. Se seed e' None ne viene generato uno nuovo (non deterministico)
+    e restituito al chiamante, cosi' da poterlo registrare (es. in config_resolved.yaml)
+    anche quando non specificato esplicitamente in config.
+    """
+    if seed is None:
+        seed = int.from_bytes(os.urandom(4), "big")
+    seed = int(seed)
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    return seed
+
+
 def _save_run_config(config_path: Optional[Path], cfg: Dict[str, Any], out_dir: Path) -> None:
     """Salva il config usato per la run (raw + risolto) dentro out_dir."""
     if config_path is not None and Path(config_path).exists():
@@ -71,6 +95,12 @@ def run(cfg: Dict[str, Any], project_root: Path, config_path: Optional[Path] = N
         raise ValueError(f"Unsupported mode={mode!r}. Expected 'train' or 'infer'.")
 
     loaders, split_info = build_dataloaders(cfg)
+
+    if mode == "train":
+        used_seed = _seed_training_run((cfg.get("train") or {}).get("seed"))
+        cfg["train"]["seed"] = used_seed
+        print(f"[train] train.seed={used_seed} (dataset.split.seed invariato: split identico ad altre run)")
+
     model = build_model(cfg["model"])
 
     dcfg = cfg.get("dataset") or {}

@@ -34,7 +34,7 @@ model:
   unet:                 in_channels, base_channels, num_levels, out_channels
   stacked_conv:         hidden_dims, kernel_size, padding
   final_out_channels
-train:                 device, num_epochs, lr, use_data_parallel
+train:                 device, num_epochs, lr, use_data_parallel, seed
   checkpoint:           dir, interval
   early_stopping:       patience
   lr_scheduler:         patience, factor, threshold
@@ -197,3 +197,28 @@ Notes:
 - LPIPS itself has no closed-form formula here — it's the output of a pretrained AlexNet (`lpips` package, Zhang et al. 2018) with learned per-channel linear weights on normalized deep features.
 - `combined_loss`'s per-timestep breakdown is obtained by calling `weighted_mse_lpips_loss` on a single frame at a time (`T=1` slice) instead of the whole `(B,C,T,H,W)` tensor at once — averaging the resulting `t0..t3` values with equal weight gives exactly the same number as the single whole-tensor call (verified), so this doesn't change the aggregate `combined_loss`/`val_loss` semantics used during training, it only exposes it per timestep.
 - All values in `metrics.csv` are rounded to 3 decimal places for readability.
+
+## `train.seed` and multi-seed runs (`scripts/run_multi_seed.py`)
+
+`train.seed` (default `null`) seeds Python/NumPy/Torch (model weight initialization + training batch shuffling) for a single training run. It is completely independent from `dataset.split.seed`:
+
+- `dataset.split.seed` (+ `class_percentages`, Excel overrides) is the **only** thing that decides which events end up in train/val/test — see "Config file structure" and "Excel file layout" above.
+- `train.seed` only affects **how the model trains** on whatever split was already computed (initial weights, batch order). Changing it never moves an event from one split to another.
+- If `train.seed` is left `null`, a random seed is generated at the start of training and written back into `config_resolved.yaml` for that run, so it's always possible to see (after the fact) which seed a given checkpoint used, even if you didn't set one explicitly.
+- The seeding happens right after the split is computed and right before the model is built, so `dataset.split.seed`'s consumption of Python's global RNG (used internally for the split) is never affected by `train.seed`, and vice versa.
+
+`scripts/run_multi_seed.py` automates training + inference across several `train.seed` values while keeping `dataset.split.seed` fixed, then aggregates the resulting `metrics.csv` files into a mean/standard-deviation summary across seeds — i.e. "how much does the model's performance vary run-to-run on the *exact same* train/val/test split":
+
+```
+python scripts/run_multi_seed.py \
+  --train-config configs/train_flip.yaml \
+  --infer-config configs/inference_flip.yaml \
+  --seeds 1,2,3,4,5
+```
+
+- `--seeds "1,2,3,4,5"` (comma-separated) or `--n-runs 5 --base-seed 0` (generates `0,1,2,3,4`) selects which `train.seed` values to run.
+- Fails fast if `dataset.split.seed` differs between `--train-config` and `--infer-config` (the two configs must resolve to the identical split for the aggregation to be meaningful).
+- Only supports `dataset.split.strategy: train_val_test` (not `by_class`, which has no train/val/test split to keep static).
+- For each seed `N`: trains into `<train.checkpoint.dir>_seedN/` and runs inference into `<infer.save.dirs.*>/seed_N/` (both derived automatically from the paths already in the configs — nothing to edit by hand).
+- `--skip-train` re-runs only inference + aggregation against checkpoints already trained by a previous invocation; `--skip-infer` trains all seeds and stops before inference.
+- After all seeds finish, writes `seeds_summary_<split>.csv` (same folder that holds the per-split results) for every active split (`infer.run.test`/`val`/`train`): same layout as `metrics.csv`, but with two rows per (branch, metric) — `seed_mean` and `seed_std` (sample standard deviation, `ddof=1`; `0.0` with a single seed) — across `t0..tN`/`mean`, computed by `aggregate_metrics_across_seeds` in `src/unet3d_gatedconv3d/inference/metrics.py`.

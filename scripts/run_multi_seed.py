@@ -60,6 +60,7 @@ def main() -> None:
     parser.add_argument("--base-seed", type=int, default=0, help="Primo seed usato con --n-runs (default 0).")
     parser.add_argument("--skip-train", action="store_true", help="Salta il training: richiede checkpoint gia' presenti per ogni seed, esegue solo inferenza+aggregazione.")
     parser.add_argument("--skip-infer", action="store_true", help="Esegue solo il training per ogni seed, salta inferenza e aggregazione.")
+    parser.add_argument("--device", type=str, default=None, help="Sovrascrive train.device e infer.device (es. 'cuda:0'), utile per distribuire piu' run su piu' GPU.")
     args = parser.parse_args()
 
     seeds = _parse_seeds(args)
@@ -118,6 +119,8 @@ def main() -> None:
             cfg["mode"] = "train"
             cfg["train"]["seed"] = seed
             cfg["train"]["checkpoint"]["dir"] = seed_checkpoint_dirs[seed]
+            if args.device:
+                cfg["train"]["device"] = args.device
             run(cfg, project_root=PROJECT_ROOT, config_path=train_config_path)
     else:
         print("[skip-train] Salto il training: uso i checkpoint gia' presenti su disco.")
@@ -139,6 +142,8 @@ def main() -> None:
         cfg["infer"]["checkpoint_path"] = ckpt_rel
         for split in active_splits:
             cfg["infer"]["save"]["dirs"][split] = seed_save_dirs[seed][split]
+        if args.device:
+            cfg["infer"]["device"] = args.device
         run(cfg, project_root=PROJECT_ROOT, config_path=infer_config_path)
 
     # --- aggregazione media/deviazione standard tra seed ---

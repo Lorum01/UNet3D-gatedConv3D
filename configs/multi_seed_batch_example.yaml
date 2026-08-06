@@ -1,0 +1,29 @@
+# Esempio di file per scripts/run_multi_seed_batch.py
+#
+# Ogni job viene tradotto in una chiamata a scripts/run_multi_seed.py.
+# Se 'gpu' non e' specificato, i job vengono assegnati a rotazione tra le GPU
+# passate con --gpus (default 0,1). I job sulla stessa GPU girano in
+# sequenza; GPU diverse girano in parallelo tra loro.
+#
+# Nota: al momento in configs/ l'unica coppia train/infer coerente e'
+# train_flip.yaml + inference_flip.yaml. Per aggiungere altri job (es. per
+# train_flip_high.yaml / train_flip_low.yaml) serve prima creare un
+# inference_*.yaml corrispondente (stesso checkpoint dir/path, stesso
+# dataset.split.seed).
+
+jobs:
+  - name: flip_alfa_07
+    train_config: configs/train_flip.yaml
+    infer_config: configs/inference_flip.yaml
+    n_runs: 5
+    base_seed: 0
+    # seeds: [0, 1, 2, 3, 4]   # alternativa esplicita a n_runs/base_seed
+    # gpu: 0                   # opzionale, altrimenti assegnata a rotazione
+    # skip_train: false
+    # skip_infer: false
+
+  # - name: flip_high
+  #   train_config: configs/train_flip_high.yaml
+  #   infer_config: configs/inference_flip_high.yaml
+  #   n_runs: 5
+  #   base_seed: 0

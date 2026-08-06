@@ -14,7 +14,7 @@ import yaml
 from ..models.model import build_model
 from ..training.train_loop import training_loop_with_validation_3d
 from ..inference.test_utility import test_model_create_gifs_3ch
-from ..inference.metrics import evaluate_metrics_3d, save_metrics_csv
+from ..inference.metrics import evaluate_metrics_3d, save_metrics_csv, merge_metrics_csv
 
 from .prep_data import build_dataloaders, save_split_assignments
 
@@ -323,3 +323,10 @@ def run(cfg: Dict[str, Any], project_root: Path, config_path: Optional[Path] = N
                 max_batches=metrics_max_batches,
                 split_name="train",
             )
+
+    if metrics_enabled:
+        # results_root e' la cartella del run (genitore comune di test/val/train);
+        # il merge aggrega TUTTI i run sotto la sua cartella padre (es. Model_Results/),
+        # cosi' all_metrics.csv resta aggiornato con l'intera storia, non solo questo run.
+        n_rows = merge_metrics_csv(str(results_root.parent))
+        print(f"[metrics] all_metrics.csv aggiornato: {n_rows} righe ({results_root.parent / 'all_metrics.csv'})")

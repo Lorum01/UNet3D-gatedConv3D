@@ -43,11 +43,11 @@ model:
 
 train:
   loss:
-    alpha: 0.5
+    alpha: 0.7
 
 infer:
   device: "cuda"
-  checkpoint_path: "./Checkpoints_flip_alfa_05/best_model.pth"
+  checkpoint_path: "./Checkpoints_flip_multiseed_alfa_07/best_model.pth"
   # Alto a sufficienza da coprire TUTTE le finestre generate dagli eventi
   # selezionati sotto (non e' un limite reale col numero di eventi cosi' basso).
   max_batches: 1000
@@ -71,9 +71,9 @@ infer:
     gifs: true
     show_plots: false
     dirs:
-      test: "Model_Results/flip_alfa_05_best_model/test"
-      val: "Model_Results/flip_alfa_05_best_model/val"
-      train: "Model_Results/flip_alfa_05_best_model/train"
+      test: "Model_Results/flip_alfa_multiseed_07_best_model/test"
+      val: "Model_Results/flip_alfa_multiseed_07_best_model/val"
+      train: "Model_Results/flip_alfa_multiseed_07_best_model/train"
 
   # inferenza sui 2 eventi di train, 2 di validation, 10 di test scelti sopra
   run:

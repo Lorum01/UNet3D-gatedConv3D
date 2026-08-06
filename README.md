@@ -14,6 +14,7 @@ From this folder (`cleaned-repo`):
   - `python scripts/run.py --config configs/inference_by_class.yaml`
 
 When running inference, the runner also saves in the results folder:
+
 - the console output log (`run_YYYYMMDD-HHMMSS.log`)
 - the config file passed via `--config` (copied as-is)
 - the resolved/merged config actually used (`config_resolved.yaml`)
@@ -123,11 +124,11 @@ Add a column named **`Split`** to force a base event into a specific split inste
 Minimal example:
 
 | (row) | Class | Split |
-|------:|------:|------:|
-| 0     | 3     |       |
-| 1     | 1     | train |
-| 2     | 1     |       |
-| ...   | ...   | ...   |
+| ----: | ----: | ----: |
+|     0 |     3 |       |
+|     1 |     1 | train |
+|     2 |     1 |       |
+|   ... |   ... |   ... |
 
 Tip: you can add extra columns (e.g. `EventName`) to document the mapping, but at the moment the code uses only `Class`, `Split`, and the **row order** (matched against base event folders only).
 
@@ -148,11 +149,11 @@ There are two separate concerns:
 
 ### Recommended combinations
 
-| `dataset.normalization.mode` | Dataset output range | What to set in `infer.normalization_override` |
-|---|---|---|
-| `none` | whatever your `.npy` contains (typically `[0,1]`) | leave `denorm_from_neg1_pos1: false` (or omit) and `mean`/`std: null` |
-| `neg1pos1` | `[-1,1]` | leave `denorm_from_neg1_pos1: true` (and `mean`/`std: null`) |
-| `standardize` | standardized (unbounded) | set `mean`/`std` (train stats) and `denorm_from_neg1_pos1: false` |
+| `dataset.normalization.mode` | Dataset output range                                 | What to set in`infer.normalization_override`                             |
+| ------------------------------ | ---------------------------------------------------- | -------------------------------------------------------------------------- |
+| `none`                       | whatever your`.npy` contains (typically `[0,1]`) | leave`denorm_from_neg1_pos1: false` (or omit) and `mean`/`std: null` |
+| `neg1pos1`                   | `[-1,1]`                                           | leave`denorm_from_neg1_pos1: true` (and `mean`/`std: null`)          |
+| `standardize`                | standardized (unbounded)                             | set`mean`/`std` (train stats) and `denorm_from_neg1_pos1: false`     |
 
 ### Notes / caveats
 
@@ -166,9 +167,11 @@ There are two separate concerns:
 `infer.events: {train, val, test}` limits inference (images/GIFs and metrics) to the **first N events** of each split, in the same deterministic order produced by the train/val/test split (depends on `dataset.split.seed`/`class_percentages`, plus any Excel `Split` overrides). Each kept event is processed **in full** (every window it generates), not just N windows. Set a value to `null` (or omit the split) to run on the **entire** split instead. Only applies when `mode: infer`; ignored in training.
 
 The exact events selected are always printed to the log:
+
 ```
 [INFO] Eventi selezionati per inferenza (infer.events): train=[...], val=[...], test=['2021_06_25']
 ```
+
 There is currently no way to select an event **by name** — only by position/count. To target one specific event, either set the count high enough (or `null`) to include it and then look at its own subfolder in the results dir (results are grouped one subfolder per event name), or reduce `dataset.split.class_percentages`/reorder the dataset so it lands first.
 
 ## Metrics (`metrics.csv`)
@@ -178,19 +181,21 @@ If `infer.metrics.enabled` (default `true`), for every active split (`test`/`val
 - `infer.metrics.max_batches`: optional cap on the number of batches evaluated (`null` = the whole loader, i.e. the whole split, or the whole subset already restricted by `infer.events`). Independent from `infer.max_batches`, which only limits how many batches get images/GIFs.
 
 **What is compared:** for every batch, the model runs the same 2-step autoregressive inference used for the GIFs, producing two branches, each compared frame-by-frame against the ground-truth `targets` from the loader:
+
 - `pred`: direct prediction (4 input frames → 4 output frames, one forward pass).
 - `predm`: modified/autoregressive prediction — frames `t0,t1` come from `pred`'s first pass; frames `t2,t3` come from a second forward pass whose input is the last 2 input frames + `pred`'s first 2 output frames fed back in. This branch shows how error compounds when the model's own predictions are reused as input.
 
 For each branch, `metrics.csv` reports, per output timestep (`t0`..`t3`) and as a `mean` over the 4 timesteps:
 
-| metric | space | formula |
-|---|---|---|
-| `mse` | denormalized to `[0,1]` (same space used to save images) | `MSE = mean((pred - target)^2)` |
-| `psnr` | denormalized to `[0,1]`, `data_range=1.0` | `PSNR = 10 * log10(1 / MSE)` (dB, higher is better) |
-| `ssim` | denormalized to `[0,1]`, `data_range=1.0`, gaussian window 11x11, σ=1.5, k1=0.01, k2=0.03 (Wang et al. 2004, via `torchmetrics`) | `SSIM = [(2·μx·μy+C1)(2·σxy+C2)] / [(μx²+μy²+C1)(σx²+σy²+C2)]`, range `[-1,1]`, 1 = identical |
-| `combined_loss` | **normalized** tensors (same space as training, e.g. `[-1,1]` for `neg1pos1`) | `alpha * MSE(out, target) + (1 - alpha) * LPIPS(out, target)`, computed one frame at a time via `weighted_mse_lpips_loss` (same function used in `train_loop.py`), `alpha` from `train.loss.alpha` (default `0.7`), `lpips_input_mode` from `train.loss.lpips_input_mode` |
+| metric            | space                                                                                                                                  | formula                                                                                                                                                                                                                                                                                   |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mse`           | denormalized to`[0,1]` (same space used to save images)                                                                              | `MSE = mean((pred - target)^2)`                                                                                                                                                                                                                                                         |
+| `psnr`          | denormalized to`[0,1]`, `data_range=1.0`                                                                                           | `PSNR = 10 * log10(1 / MSE)` (dB, higher is better)                                                                                                                                                                                                                                     |
+| `ssim`          | denormalized to`[0,1]`, `data_range=1.0`, gaussian window 11x11, σ=1.5, k1=0.01, k2=0.03 (Wang et al. 2004, via `torchmetrics`) | `SSIM = [(2·μx·μy+C1)(2·σxy+C2)] / [(μx²+μy²+C1)(σx²+σy²+C2)]`, range `[-1,1]`, 1 = identical                                                                                                                                                                           |
+| `combined_loss` | **normalized** tensors (same space as training, e.g. `[-1,1]` for `neg1pos1`)                                                | `alpha * MSE(out, target) + (1 - alpha) * LPIPS(out, target)`, computed one frame at a time via `weighted_mse_lpips_loss` (same function used in `train_loop.py`), `alpha` from `train.loss.alpha` (default `0.7`), `lpips_input_mode` from `train.loss.lpips_input_mode` |
 
 Notes:
+
 - All four metrics (`mse`, `psnr`, `ssim`, `combined_loss`) are true sample-weighted averages over the whole evaluated set (every batch's contribution is weighted by its own size before being combined), not just an average of per-batch values — this matters because the last batch of a split is usually smaller (`DataLoader` doesn't set `drop_last`).
 - `psnr` is derived analytically from the already-aggregated `mse` (`10*log10(1/mse)`), not averaged from per-batch PSNR values — PSNR is a nonlinear (logarithmic) function of MSE, so naively averaging per-batch PSNR values would **not** equal the PSNR of the whole split, while MSE itself is a plain arithmetic mean so weighting it by batch size and re-averaging is always exact.
 - The `mse` column in `metrics.csv` and the MSE term inside `combined_loss` are **not the same number** — same name, different space (denormalized `[0,1]` vs normalized), by design: `combined_loss` must stay comparable to training/validation loss, while `mse`/`psnr`/`ssim` must be interpretable in "visible image" space.

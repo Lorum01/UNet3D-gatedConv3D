@@ -4,7 +4,8 @@ import csv
 import math
 import os
 import statistics
-from typing import Any, Dict, Optional, Sequence, Tuple
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import torch
 import torch.nn.functional as F
@@ -187,6 +188,57 @@ def save_metrics_csv(metrics: Dict[str, Any], csv_path: str) -> None:
             for metric_name in ("combined_loss", "mse", "psnr", "ssim"):
                 row = metrics[branch][metric_name]
                 writer.writerow([branch, metric_name] + [_fmt(row[k]) for k in t_keys] + [_fmt(row["mean"])])
+
+
+_SPLIT_MERGE_ORDER = {"train": 0, "val": 1, "test": 2}
+_METRIC_MERGE_ORDER = {"combined_loss": 0, "mse": 1, "psnr": 2, "ssim": 3}
+
+
+def merge_metrics_csv(root: str, out_csv_path: Optional[str] = None) -> int:
+    """Unisce tutti i metrics.csv trovati ricorsivamente sotto `root` (uno per
+    ogni cartella split, formato scritto da save_metrics_csv) in un unico CSV
+    <root>/all_metrics.csv (o out_csv_path se specificato), aggiungendo le colonne
+    `run` (cartella del run, genitore della cartella split) e `split`. Non tocca
+    i metrics.csv originali. Le righe sono ordinate per run, split, branch, metric.
+
+    Richiamata sia da scripts/merge_inference_metrics.py (CLI) sia automaticamente
+    a fine pipeline di inferenza, cosi' che il CSV aggregato resti sempre aggiornato
+    senza doverlo rigenerare a mano.
+
+    Ritorna il numero di righe scritte (0 se nessun metrics.csv trovato).
+    """
+    root_path = Path(root)
+    out_path = Path(out_csv_path) if out_csv_path else root_path / "all_metrics.csv"
+    files = sorted(p for p in root_path.rglob("metrics.csv") if p.resolve() != out_path.resolve())
+    if not files:
+        return 0
+
+    t_cols: List[str] = []
+    rows: List[Dict[str, str]] = []
+    for f in files:
+        run_name = f.parent.parent.relative_to(root_path).as_posix()
+        split = f.parent.name
+        with open(f, "r", newline="", encoding="utf-8") as fh:
+            reader = csv.DictReader(fh)
+            if not t_cols:
+                t_cols = [c for c in reader.fieldnames or [] if c not in ("branch", "metric")]
+            for row in reader:
+                rows.append({"run": run_name, "split": split, **row})
+
+    rows.sort(key=lambda r: (
+        r["run"],
+        _SPLIT_MERGE_ORDER.get(r["split"], 99),
+        _BRANCHES.index(r["branch"]) if r["branch"] in _BRANCHES else 99,
+        _METRIC_MERGE_ORDER.get(r["metric"], 99),
+    ))
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(out_path, "w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=["run", "split", "branch", "metric"] + t_cols)
+        writer.writeheader()
+        writer.writerows(rows)
+
+    return len(rows)
 
 
 def aggregate_metrics_across_seeds(

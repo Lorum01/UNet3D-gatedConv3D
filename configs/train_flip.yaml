@@ -43,19 +43,19 @@ model:
 
 train:
   device: "cuda:0"
-  num_epochs: 250
+  num_epochs: 100
   lr: 1.0e-3
   # Only takes effect if the machine actually exposes >1 CUDA GPU; otherwise ignored.
   use_data_parallel: false
   checkpoint:
-    dir: "./Checkpoints_flip_alfa_05"
-    interval: 10
+    dir: "./Checkpoints_flip_multiseed_alfa_07"
+    interval: 20
   early_stopping:
-    patience: 80
+    patience: 30
   lr_scheduler:
     patience: 12
     factor: 0.5
     threshold: 1.0e-4
   loss:
-    alpha: 0.5
+    alpha: 0.7
   show_plots: false

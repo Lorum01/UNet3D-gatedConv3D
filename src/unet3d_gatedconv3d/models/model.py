@@ -103,27 +103,31 @@ class UNet3D(nn.Module):
 
 
 class GatedConv3DBlock(nn.Module):
+    """Gated Conv3D block, faithful to the VONA-DL paper Sec. 3.3.2 (Eq. 4-6).
+
+    A single Conv3D maps the layer input to 3*hidden_dim channels, split into
+    (i, o, g). Applied as a purely feed-forward gated activation on the
+    current volume (no recurrent cell state carried across time steps, per
+    the paper: "Unlike a recurrent cell that maintains a separate cell state
+    across time steps, our implementation utilizes these components to
+    perform a gated activation on the current volume locally"):
+        c~ = sigmoid(i) * tanh(g)
+        Z  = sigmoid(o) * tanh(c~)
+    """
+
     def __init__(self, input_dim: int, hidden_dim: int, kernel_size: int = 3, padding: int = 1):
         super().__init__()
         self.hidden_dim = hidden_dim
-        self.conv = nn.Conv3d(input_dim + hidden_dim, 4 * hidden_dim, kernel_size, padding=padding)
+        self.conv = nn.Conv3d(input_dim, 3 * hidden_dim, kernel_size, padding=padding)
 
-    def forward(self, x: torch.Tensor, h_prev: torch.Tensor, c_prev: torch.Tensor):
-        combined = torch.cat([x, h_prev], dim=1)
-        gates = self.conv(combined)
-        i, f, o, g = torch.chunk(gates, 4, dim=1)
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        gates = self.conv(x)
+        i, o, g = torch.chunk(gates, 3, dim=1)
         i = torch.sigmoid(i)
-        f = torch.sigmoid(f)
         o = torch.sigmoid(o)
         g = torch.tanh(g)
-        c = f * c_prev + i * g
-        h = o * torch.tanh(c)
-        return h, c
-
-    def init_hidden(self, batch_size: int, time_steps: int, height: int, width: int, device):
-        h = torch.zeros(batch_size, self.hidden_dim, time_steps, height, width, device=device)
-        c = torch.zeros(batch_size, self.hidden_dim, time_steps, height, width, device=device)
-        return h, c
+        c_tilde = i * g
+        return o * torch.tanh(c_tilde)
 
 
 class StackedConv3D(nn.Module):
@@ -139,20 +143,9 @@ class StackedConv3D(nn.Module):
             current_dim = hd
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        batch_size, _channels, time_steps, height, width = x.size()
-        device = x.device
-
-        h_states = []
-        c_states = []
-        for layer in self.layers:
-            hi, ci = layer.init_hidden(batch_size, time_steps, height, width, device)
-            h_states.append(hi)
-            c_states.append(ci)
-
         current = x
-        for i, layer in enumerate(self.layers):
-            hi, ci = layer(current, h_states[i], c_states[i])
-            current = hi
+        for layer in self.layers:
+            current = layer(current)
         return current
 
 

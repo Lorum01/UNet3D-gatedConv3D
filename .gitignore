@@ -224,3 +224,7 @@ Model_Results/
 Model_Results_*/
 ~$EventsEtnaCLASS_Final.xlsx
 DATA_SHAPE_CONTEXT.md
+
+# Migrazione one-off gated Conv3D (4->3 gate, fedele a paper Sec. 3.3.2) e backup locale
+src/unet3d_gatedconv3d/models/_backup/
+scripts/convert_checkpoint_paper_gate.py

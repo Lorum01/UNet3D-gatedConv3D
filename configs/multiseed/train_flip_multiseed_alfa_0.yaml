@@ -48,14 +48,14 @@ train:
   # Only takes effect if the machine actually exposes >1 CUDA GPU; otherwise ignored.
   use_data_parallel: false
   checkpoint:
-    dir: "./Checkpoints_flip_multiseed_alfa_07_1"
+    dir: "./Checkpoints_flip_multiseed/alfa_0"
     interval: 100
   early_stopping:
-    patience: 25
+    patience: 30
   lr_scheduler:
     patience: 12
     factor: 0.5
     threshold: 1.0e-4
   loss:
-    alpha: 0.7
+    alpha: 0.0
   show_plots: false

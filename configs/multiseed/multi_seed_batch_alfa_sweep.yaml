@@ -1,0 +1,31 @@
+# Batch multiseed: sweep su train.loss.alpha, 5 seed (0-4) per ogni valore.
+# gpu0: alfa=1, poi alfa=0.5 (in sequenza)
+# gpu1: alfa=0, poi alfa=0.25 (in sequenza)
+jobs:
+  - name: alfa_1
+    train_config: configs/multiseed/train_flip_multiseed_alfa_1.yaml
+    infer_config: configs/multiseed/inference_flip_multiseed_alfa_1.yaml
+    n_runs: 5
+    base_seed: 0
+    gpu: 0
+
+  - name: alfa_0
+    train_config: configs/multiseed/train_flip_multiseed_alfa_0.yaml
+    infer_config: configs/multiseed/inference_flip_multiseed_alfa_0.yaml
+    n_runs: 5
+    base_seed: 0
+    gpu: 1
+
+  - name: alfa_05
+    train_config: configs/multiseed/train_flip_multiseed_alfa_05.yaml
+    infer_config: configs/multiseed/inference_flip_multiseed_alfa_05.yaml
+    n_runs: 5
+    base_seed: 0
+    gpu: 0
+
+  - name: alfa_025
+    train_config: configs/multiseed/train_flip_multiseed_alfa_025.yaml
+    infer_config: configs/multiseed/inference_flip_multiseed_alfa_025.yaml
+    n_runs: 5
+    base_seed: 0
+    gpu: 1

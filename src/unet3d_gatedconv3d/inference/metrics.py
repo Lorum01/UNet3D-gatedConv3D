@@ -73,7 +73,10 @@ def evaluate_metrics_3d(
     model = load_checkpoint(model, checkpoint_path, device)
     model.eval()
 
-    denorm = build_denorm(mean, std, device, scale_to_neg1_pos1=scale_to_neg1_pos1)
+    # clamp=False: le metriche devono riflettere l'errore reale, incluso
+    # l'eventuale overshoot/undershoot fuori [0,1] prodotto dal modello,
+    # invece di lasciare che un clamp lo nasconda silenziosamente.
+    denorm = build_denorm(mean, std, device, scale_to_neg1_pos1=scale_to_neg1_pos1, clamp=False)
 
     per_t_sums = {branch: None for branch in _BRANCHES}  # branch -> {"combined_loss"/"mse"/"ssim": [sum_per_t]}
     n_batches = 0

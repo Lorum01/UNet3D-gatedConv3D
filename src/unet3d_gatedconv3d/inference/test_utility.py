@@ -23,29 +23,38 @@ def to_device(x, device: torch.device):
 def build_denorm(mean: Optional[Sequence[float]],
                  std: Optional[Sequence[float]],
                  device: torch.device,
-                 scale_to_neg1_pos1: bool = False):
-    """Return a function that maps a (B,C,T,H,W) tensor to [0,1] for visualization.
+                 scale_to_neg1_pos1: bool = False,
+                 clamp: bool = True):
+    """Return a function that maps a (B,C,T,H,W) tensor back to [0,1] scale.
 
     Cases:
-    - If `mean`/`std` are provided: inverse standardization `x*std + mean`, then clamp.
-    - Else if `scale_to_neg1_pos1=True`: inverse scaling from [-1,1] to [0,1] via `(x+1)/2`, then clamp.
-    - Else: assume already in [0,1] and just clamp.
+    - If `mean`/`std` are provided: inverse standardization `x*std + mean`.
+    - Else if `scale_to_neg1_pos1=True`: inverse scaling from [-1,1] to [0,1] via `(x+1)/2`.
+    - Else: assume already in [0,1].
+
+    `clamp=True` (default) clips the result to [0,1], which is required before
+    saving/displaying as an image. Pass `clamp=False` when the output is used
+    for error metrics (mse/ssim/psnr) so that values a model produces outside
+    [0,1] are measured as-is instead of being silently clipped away.
     """
+    def _maybe_clamp(x: torch.Tensor) -> torch.Tensor:
+        return x.clamp(0, 1) if clamp else x
+
     if mean is None or std is None:
         if scale_to_neg1_pos1:
             def _unscale(x: torch.Tensor) -> torch.Tensor:
-                return ((x + 1.0) * 0.5).clamp(0, 1)
+                return _maybe_clamp((x + 1.0) * 0.5)
             return _unscale
 
         def _iden(x: torch.Tensor) -> torch.Tensor:
-            return x.clamp(0, 1)
+            return _maybe_clamp(x)
         return _iden
 
     mean_t = torch.as_tensor(mean, dtype=torch.float32, device=device).view(1, -1, 1, 1, 1)
     std_t = torch.as_tensor(std, dtype=torch.float32, device=device).view(1, -1, 1, 1, 1)
 
     def _denorm(x: torch.Tensor) -> torch.Tensor:
-        return (x * std_t + mean_t).clamp(0, 1)
+        return _maybe_clamp(x * std_t + mean_t)
 
     return _denorm
 

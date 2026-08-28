@@ -45,13 +45,17 @@ def load_event_classes_from_excel(excel_path):
     return event_class_dict
 
 
-def load_series_from_folders(mask_folder):
+def load_series_from_folders(mask_folder, skip_suffixes=("_flipped",)):
     """
     Carica serie temporali da una struttura di cartelle.
     Ritorna:
       - all_series: lista di array NumPy (T, H, W, C) o (T, H, W) per ogni evento
       - all_series_filenames: lista di liste di stringhe, una per ogni evento,
         contenente i nomi dei file/percorsi corrispondenti a ciascun frame.
+
+    `skip_suffixes`: cartelle evento il cui nome termina con uno di questi suffissi
+    vengono ignorate (qui: le varianti aumentate `*_flipped`, escluse da questo
+    train "legacy window-split").
     """
     all_series = []
     all_series_filenames = []
@@ -59,6 +63,9 @@ def load_series_from_folders(mask_folder):
     for event_folder in sorted(os.listdir(mask_folder)):
         mask_event_path = os.path.join(mask_folder, event_folder)
         if not os.path.isdir(mask_event_path):
+            continue
+        if any(event_folder.endswith(sfx) for sfx in skip_suffixes):
+            print(f"[load_series_from_folders] Salto cartella '{event_folder}' (suffisso escluso).")
             continue
 
         mask_files = sorted(os.listdir(mask_event_path))

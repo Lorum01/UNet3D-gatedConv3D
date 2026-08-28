@@ -134,7 +134,23 @@ def main() -> None:
             shutil.copy2(str(primary_log_path), str(out_dir / log_name))
         return
 
-    run(cfg, project_root=PROJECT_ROOT)
+    # --- train: tee dello stdout/stderr su file (cattura anche la mappa dello split) ---
+    ts = _dt.datetime.now(_dt.timezone.utc).astimezone().strftime("%Y%m%d-%H%M%S")
+    ckpt_dir = PROJECT_ROOT / str((cfg.get("train") or {}).get("checkpoint_dir", "Checkpoints"))
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+    # I CSV della mappa dello split vengono scritti nella cartella dei checkpoint.
+    cfg.setdefault("data", {})["split_out_dir"] = str(ckpt_dir)
+    log_path = ckpt_dir / f"train_{ts}.log"
+    _copy_run_artifacts(config_path=config_path, cfg=cfg, artifact_dirs=[ckpt_dir])
+    with _tee_output_to_file(log_path):
+        print(f"[run] Started at: {ts}")
+        print(f"[run] CWD: {os.getcwd()}")
+        print(f"[run] Config: {config_path}")
+        print(f"[run] Checkpoint dir: {ckpt_dir}")
+        print("")
+        run(cfg, project_root=PROJECT_ROOT)
+        print("")
+        print(f"[run] Finished. Log saved to: {log_path}")
 
 
 if __name__ == "__main__":

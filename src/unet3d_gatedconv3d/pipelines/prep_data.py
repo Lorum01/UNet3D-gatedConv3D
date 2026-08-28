@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from collections import Counter
+import csv
+import os
+from collections import Counter, defaultdict
 from typing import Any, Dict, Tuple
 
 import numpy as np
@@ -81,6 +83,70 @@ def _build_sequences(cfg: Dict[str, Any]):
     return all_inputs_list, all_targets_list, labels, input_fnames, target_fnames
 
 
+def _event_of(fnames_for_window) -> str:
+    """Nome cartella evento da cui proviene una finestra (dal path del 1o frame di input)."""
+    if fnames_for_window is None or len(fnames_for_window) == 0:
+        return "?"
+    return os.path.basename(os.path.dirname(str(fnames_for_window[0])))
+
+
+def _dump_window_split_map(*, input_fnames, labels, train_idx, val_idx, test_idx, seed, out_dir):
+    """
+    Salva due CSV:
+      - split_seed{seed}_window_map.csv  : una riga per finestra (idx, split, evento, classe, primo frame)
+      - split_seed{seed}_event_summary.csv: per evento, n. finestre in train/val/test (+ flag leakage)
+    e stampa a video il riepilogo per evento (catturato nel log del run).
+    """
+    if input_fnames is None:
+        print("[split-map] input_fnames non disponibili: salto il dump della mappa finestra->split.")
+        return
+
+    os.makedirs(out_dir, exist_ok=True)
+    split_of = {}
+    for i in train_idx:
+        split_of[i] = "train"
+    for i in val_idx:
+        split_of[i] = "val"
+    for i in test_idx:
+        split_of[i] = "test"
+
+    labels_list = labels.tolist() if hasattr(labels, "tolist") else list(labels)
+
+    per_event = defaultdict(lambda: {"train": 0, "val": 0, "test": 0, "class": None})
+    map_path = os.path.join(out_dir, f"split_seed{seed}_window_map.csv")
+    with open(map_path, "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(["window_idx", "split", "event", "class", "first_input_frame"])
+        for i in sorted(split_of):
+            ev = _event_of(input_fnames[i])
+            cls = int(labels_list[i])
+            first_frame = os.path.basename(str(input_fnames[i][0])) if len(input_fnames[i]) else ""
+            w.writerow([i, split_of[i], ev, cls, first_frame])
+            per_event[ev][split_of[i]] += 1
+            per_event[ev]["class"] = cls
+
+    summary_path = os.path.join(out_dir, f"split_seed{seed}_event_summary.csv")
+    n_leak = 0
+    with open(summary_path, "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(["event", "class", "n_train", "n_val", "n_test", "spans_multiple_splits"])
+        for ev in sorted(per_event):
+            d = per_event[ev]
+            spans = sum(1 for k in ("train", "val", "test") if d[k] > 0) > 1
+            n_leak += int(spans)
+            w.writerow([ev, d["class"], d["train"], d["val"], d["test"], int(spans)])
+
+    print(f"\n=== Split a livello FINESTRA (seed={seed}) ===")
+    print(f"{'event':<22} {'cls':>3} {'train':>6} {'val':>5} {'test':>5}  multi-split")
+    for ev in sorted(per_event):
+        d = per_event[ev]
+        spans = sum(1 for k in ("train", "val", "test") if d[k] > 0) > 1
+        print(f"{ev:<22} {d['class']:>3} {d['train']:>6} {d['val']:>5} {d['test']:>5}  {'<<<' if spans else ''}")
+    print(f"\nEventi con finestre in piu' split (firma del leakage 'legacy'): {n_leak}/{len(per_event)}")
+    print(f"Mappa finestra->split : {map_path}")
+    print(f"Riepilogo per evento  : {summary_path}\n")
+
+
 def build_dataloaders(cfg: Dict[str, Any]):
     dcfg = cfg["data"]
     lcfg = cfg.get("dataloader", {})
@@ -134,6 +200,20 @@ def build_dataloaders(cfg: Dict[str, Any]):
     print("Std  canali:", std_c)
 
     report_split_coverage(train_idx, val_idx, test_idx, total_len=len(full_dataset))
+
+    # --- Tracciabilita' dello split a livello FINESTRA (schema "legacy") ---
+    # Nel vecchio schema le finestre di uno stesso evento possono finire in split
+    # diversi: qui salviamo la mappa completa finestra->split e il conteggio per
+    # evento, cosi' questo train resta riproducibile/ispezionabile.
+    _dump_window_split_map(
+        input_fnames=input_fnames,
+        labels=labels,
+        train_idx=train_idx,
+        val_idx=val_idx,
+        test_idx=test_idx,
+        seed=seed,
+        out_dir=str(dcfg.get("split_out_dir", ".")),
+    )
 
     train_subset = Subset(full_dataset, train_idx)
     val_subset = Subset(full_dataset, val_idx)

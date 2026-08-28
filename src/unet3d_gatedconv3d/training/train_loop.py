@@ -124,7 +124,10 @@ def training_loop_with_validation_3d(
     # Prepara cartella checkpoint
     # Se la cartella esiste già, per evitare sovrascritture aggiungi un suffisso
     # con data/ora al nome (es. Checkpoints_20251230_153045)
-    if os.path.exists(checkpoint_dir):
+    # Rinomina solo se la cartella esiste ED e' gia' popolata da un run precedente
+    # (contiene dei .pth). Una cartella vuota/predisposta da run.py per log e config
+    # va invece riusata cosi' com'e', per tenere tutti gli artefatti insieme.
+    if os.path.isdir(checkpoint_dir) and any(f.endswith(".pth") for f in os.listdir(checkpoint_dir)):
         from datetime import datetime
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         orig_dir = checkpoint_dir

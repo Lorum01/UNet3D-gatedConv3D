@@ -113,6 +113,13 @@ def _defaults() -> Dict[str, Any]:
             "checkpoint_path": "../Checkpoints/convUnet_Best_Test_mod_1/best_model.pth",
             "max_batches": 10,
             "gif_fps": 2,
+            # Alpha/lpips_input_mode per le metriche di inferenza (MSE, MSE+LPIPS
+            # bilanciata, SSIM): devono corrispondere a quelli usati in training
+            # (train.loss) per il checkpoint valutato in `checkpoint_path`.
+            "loss": {
+                "alpha": 0.7,
+                "lpips_input_mode": "none",
+            },
             # Overrides for visualization denormalization only (mapping model output back
             # to [0,1] for saving/plotting). Leave null to derive automatically from
             # dataset.normalization (recommended).

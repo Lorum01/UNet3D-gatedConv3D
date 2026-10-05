@@ -48,6 +48,11 @@ infer:
   # selezionati sotto (non e' un limite reale col numero di eventi cosi' basso).
   max_batches: 1000
   gif_fps: 2
+  # Deve combaciare con train.loss del checkpoint sopra (train_flip.yaml), per
+  # calcolare correttamente la metrica MSE+LPIPS bilanciata in inferenza.
+  loss:
+    alpha: 0.7
+    lpips_input_mode: "none"   # none | clamp | tanh
   normalization_override:
     mean: null
     std: null

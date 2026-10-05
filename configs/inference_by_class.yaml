@@ -41,6 +41,11 @@ infer:
   checkpoint_path: "./Checkpoints/convUnet_Best_Test_mod_1/best_model.pth"
   max_batches: 10
   gif_fps: 2
+  # Deve combaciare con train.loss del checkpoint sopra (train.yaml), per calcolare
+  # correttamente la metrica MSE+LPIPS bilanciata in inferenza.
+  loss:
+    alpha: 0.7
+    lpips_input_mode: "none"   # none | clamp | tanh
   normalization_override:
     mean: null
     std: null

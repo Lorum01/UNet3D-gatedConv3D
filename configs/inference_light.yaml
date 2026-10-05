@@ -1,7 +1,7 @@
 mode: infer
 
 paths:
-  dataset_dir: "./Dataset"
+  dataset_dir: "/home/basile/workdir/vona/Dataset"
   excel_path: "./EventsEtnaCLASS_Final.xlsx"
 
 dataset:
@@ -48,6 +48,11 @@ infer:
   checkpoint_path: "./Checkpoints_light/best_model.pth"   # best = minimo di val loss, non l'ultimo/overfittato
   max_batches: 10
   gif_fps: 2
+  # Deve combaciare con train.loss del checkpoint sopra (train_light.yaml), per
+  # calcolare correttamente la metrica MSE+LPIPS bilanciata in inferenza.
+  loss:
+    alpha: 0.7
+    lpips_input_mode: "none"   # none | clamp | tanh
   normalization_override:
     mean: null
     std: null

@@ -1,7 +1,7 @@
 mode: train
 
 paths:
-  dataset_dir: "./Dataset"
+  dataset_dir: "/home/basile/workdir/vona/Dataset"
   excel_path: "./EventsEtnaCLASS_Final.xlsx"
 
 dataset:

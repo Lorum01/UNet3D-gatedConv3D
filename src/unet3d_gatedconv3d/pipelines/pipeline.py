@@ -83,6 +83,12 @@ def run(cfg: Dict[str, Any], project_root: Path) -> None:
     override_mean = norm_override.get("mean", None)
     override_std = norm_override.get("std", None)
 
+    # Alpha/lpips_input_mode per le metriche di inferenza (MSE+LPIPS bilanciata):
+    # devono corrispondere a quelli usati in training per il checkpoint valutato.
+    loss_cfg = icfg.get("loss", {}) or {}
+    metrics_alpha = float(loss_cfg.get("alpha", 0.7))
+    metrics_lpips_input_mode = str(loss_cfg.get("lpips_input_mode", "none"))
+
     # Caso richiesto: inferenza raggruppata per classe (da Excel), senza split train/val/test
     if isinstance(loaders, dict):
         by_class_root = str(project_root / save_dirs.get("by_class_root", "Model_Results_1/by_class"))
@@ -102,6 +108,8 @@ def run(cfg: Dict[str, Any], project_root: Path) -> None:
                 save_images=bool(save_cfg["images"]),
                 save_gifs=bool(save_cfg["gifs"]),
                 show_plots=bool(save_cfg["show_plots"]),
+                alpha=metrics_alpha,
+                lpips_input_mode=metrics_lpips_input_mode,
             )
         return
 
@@ -125,6 +133,8 @@ def run(cfg: Dict[str, Any], project_root: Path) -> None:
             save_images=bool(save_cfg["images"]),
             save_gifs=bool(save_cfg["gifs"]),
             show_plots=bool(save_cfg["show_plots"]),
+            alpha=metrics_alpha,
+            lpips_input_mode=metrics_lpips_input_mode,
         )
 
     if bool(run_cfg.get("val", False)):
@@ -144,6 +154,8 @@ def run(cfg: Dict[str, Any], project_root: Path) -> None:
             save_images=bool(save_cfg["images"]),
             save_gifs=bool(save_cfg["gifs"]),
             show_plots=bool(save_cfg["show_plots"]),
+            alpha=metrics_alpha,
+            lpips_input_mode=metrics_lpips_input_mode,
         )
 
     if bool(run_cfg.get("train", False)):
@@ -163,4 +175,6 @@ def run(cfg: Dict[str, Any], project_root: Path) -> None:
             save_images=bool(save_cfg["images"]),
             save_gifs=bool(save_cfg["gifs"]),
             show_plots=bool(save_cfg["show_plots"]),
+            alpha=metrics_alpha,
+            lpips_input_mode=metrics_lpips_input_mode,
         )

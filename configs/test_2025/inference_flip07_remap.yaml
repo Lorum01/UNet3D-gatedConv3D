@@ -1,0 +1,55 @@
+mode: infer
+
+paths:
+  dataset_dir: "./Dataset_test_2025"
+  excel_path: "./configs/test_2025/EventsTest2025.xlsx"
+
+dataset:
+  split:
+    strategy: "by_class"   # niente split: valuta tutte le finestre di tutti gli eventi
+
+  input_length: 4
+  prediction_length: 4
+  stride: 1
+  image_size: [100, 100]   # [H, W]
+  channels: 3
+  normalization:
+    mode: "neg1pos1"       # scaling INPUT: deve combaciare col training
+    mean: null
+    std: null
+
+dataloader:
+  batch_size:
+    test: 4
+
+model:
+  unet:
+    in_channels: 3
+    base_channels: 32
+    num_levels: 5
+    out_channels: 64
+  stacked_conv:
+    hidden_dims: [64, 128, 256, 512]
+    kernel_size: 3
+    padding: 1
+  final_out_channels: 3
+
+infer:
+  device: "cuda:0"
+  checkpoint_path: "./Checkpoints/Checkpoints_flip_07/best_model.pth"
+  max_batches: 100000   # abbastanza alto da coprire tutte le finestre
+  gif_fps: 2
+  loss:
+    alpha: 0.7
+    lpips_input_mode: "none"   # flip_07: da training.log
+  normalization_override:
+    mean: null
+    std: null
+    denorm_from_neg1_pos1: true   # rimappa (x+1)/2 -> [0,1]
+
+  save:
+    images: true
+    gifs: true
+    show_plots: false
+    dirs:
+      by_class_root: "Model_Results/test_2025/flip07_remap/by_class"

@@ -7,6 +7,7 @@ import torch
 from PIL import Image
 import imageio.v2 as imageio
 
+from .metrics import MetricsAccumulator, write_metrics_csv
 
 
 def ensure_dir(path: str) -> None:
@@ -98,11 +99,15 @@ def test_model_create_gifs_3ch(
     save_images: bool = True,
     save_gifs: bool = True,
     show_plots: bool = True,
+    alpha: float = 0.7,
+    lpips_input_mode: str = "none",
 ) -> None:
     """
     Test autoregressivo 2-step (4 in -> 4 out, poi 2-step autoregressivo) con salvataggio immagini e GIF.
 
-    Struttura cartelle per ogni sample `sample_batch{b}_sample{i}_label{L}`:
+    Struttura cartelle: `save_dir/{nome_serie}/sample_batch{b}_sample{i}_label{L}/`,
+    dove `nome_serie` e' il nome della cartella evento da cui provengono i frame
+    (vedi `load_series_from_folders`). Dentro ogni cartella sample:
         input_t{t}_{basename-input}.npy|jpg
         target_t{t}_{basename-target}.npy|jpg
         pred_{basename-target}.npy|jpg
@@ -110,6 +115,13 @@ def test_model_create_gifs_3ch(
         (opz.) input.gif | target.gif | pred.gif | predm.gif
         {sample_idx}_input.png
         {sample_idx}_target_pred.png
+
+    Inoltre, su TUTTO il test set (non solo `max_batches`... in realta' le stesse
+    finestre viste, vedi sotto), calcola e salva in `metrics.csv` (dentro save_dir)
+    MSE, MSE+LPIPS bilanciata (alpha) e SSIM per ciascun timestep di output e la
+    relativa media, sia per la predizione diretta (`pred`) sia per quella
+    autoregressiva 2-step (`predm`). Le metriche sono calcolate sulle immagini
+    denormalizzate in [0,1] (la stessa rappresentazione salvata come jpg/gif).
 
     Parametri
     ---------
@@ -138,6 +150,12 @@ def test_model_create_gifs_3ch(
         Se True, salva le GIF per input/target/pred/predm.
     show_plots : bool
         Se True, mostra le figure matplotlib.
+    alpha : float
+        Peso della MSE nella combinazione MSE+LPIPS bilanciata (1-alpha per LPIPS);
+        deve corrispondere all'alpha usato in training per il modello valutato.
+    lpips_input_mode : str
+        Come preparare l'output del modello (portato a [-1,1]) prima di LPIPS:
+        "none" | "clamp" | "tanh" (vedi training.loss_function).
     """
 
     # ------------------------- Preparazione -------------------------
@@ -181,6 +199,7 @@ def test_model_create_gifs_3ch(
 
     # --------------------------- Main Loop ---------------------------
     batch_count = 0
+    metrics_acc: dict = {}  # popolato al primo batch, una volta noto T_out
     with torch.no_grad():
         for batch in test_loader:
             batch_count += 1
@@ -221,6 +240,25 @@ def test_model_create_gifs_3ch(
             data_d, targets_d = denorm(data), denorm(targets)
             pred1_d, predm_d  = denorm(pred1), denorm(pred_mod)
 
+            # ---------------- Metriche (MSE, MSE+LPIPS bilanciata, SSIM) ----------------
+            if not metrics_acc:
+                T_out_metrics = targets_d.shape[2]
+                metrics_acc["pred"] = MetricsAccumulator(T_out_metrics, alpha=alpha, lpips_input_mode=lpips_input_mode)
+                metrics_acc["predm"] = MetricsAccumulator(T_out_metrics, alpha=alpha, lpips_input_mode=lpips_input_mode)
+
+            event_names = []
+            for sample_idx in range(pred1_d.shape[0]):
+                target_fnames = target_fnames_batch[sample_idx] if target_fnames_batch is not None else None
+                input_fnames = input_fnames_batch[sample_idx] if input_fnames_batch is not None else None
+                fname_for_series = target_fnames[0] if target_fnames is not None else input_fnames[0] if input_fnames is not None else None
+                event_names.append(
+                    os.path.basename(os.path.dirname(fname_for_series))
+                    if fname_for_series is not None else f"sample_{batch_count}_{sample_idx}"
+                )
+
+            metrics_acc["pred"].update(pred1_d, targets_d, event_names)
+            metrics_acc["predm"].update(predm_d, targets_d, event_names)
+
             # In numpy (B,C,T,H,W)
             data_np = data_d.cpu().numpy()
             tgt_np  = targets_d.cpu().numpy()
@@ -241,8 +279,21 @@ def test_model_create_gifs_3ch(
                 input_fnames_i  = input_fnames_batch[i]  if input_fnames_batch  is not None else None  # len=T_in
                 target_fnames_i = target_fnames_batch[i] if target_fnames_batch is not None else None   # len=T_out
 
+                # Nome della serie/evento: cartella padre del file sorgente
+                # (vedi load_series_from_folders, che salva ogni frame come
+                # mask_folder/EVENT_NAME/file.npy).
+                fname_for_series = None
+                if target_fnames_i is not None:
+                    fname_for_series = target_fnames_i[0]
+                elif input_fnames_i is not None:
+                    fname_for_series = input_fnames_i[0]
+                series_name = (
+                    os.path.basename(os.path.dirname(fname_for_series))
+                    if fname_for_series is not None else "unknown_series"
+                )
+
                 sample_idx = f"batch{batch_count}_sample{i}_label{label_i}"
-                sample_dir = os.path.join(save_dir, f"sample_{sample_idx}")
+                sample_dir = os.path.join(save_dir, series_name, f"sample_{sample_idx}")
                 ensure_dir(sample_dir)
 
                 # Trasponi a (T, C, H, W)
@@ -381,6 +432,18 @@ def test_model_create_gifs_3ch(
                     plt.show()
                 else:
                     plt.close(fig_out)
+
+    # ---------------- Riepilogo e salvataggio metriche ----------------
+    if metrics_acc:
+        metrics_csv_path = os.path.join(save_dir, "metrics.csv")
+        write_metrics_csv(metrics_csv_path, metrics_acc)
+        print(f"\n== Metriche (MSE, MSE+LPIPS bilanciata alpha={alpha}, SSIM) salvate in '{metrics_csv_path}' ==")
+        for pred_type, acc in metrics_acc.items():
+            mean = acc.overall_mean()
+            print(
+                f"  [{pred_type}] mse={mean['mse']:.4f}  "
+                f"mse_lpips={mean['mse_lpips']:.4f}  ssim={mean['ssim']:.4f}"
+            )
 
     print("\n== Test completato (IMMAGINI + GIF + NPY/JPG, naming basato sui filename originali) ==\n")
 

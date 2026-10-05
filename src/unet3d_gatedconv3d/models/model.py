@@ -193,7 +193,214 @@ class Model(nn.Module):
         return self.final_conv(stacked_out)
 
 
-def build_model(cfg: dict) -> Model:
+# ============================================================================
+# Comparative models (paper Sec. 3.4) - ported verbatim from
+# alternative_models/src/comparative_models/models/model.py so they can be
+# trained through THIS workspace's pipeline (same window-level split, same
+# dataloader, same loss, same train_loop). Both consume/emit (B, C, T, H, W),
+# which is exactly what train_loop feeds after its permute.
+# ============================================================================
+
+
+class Bottleneck3D(nn.Module):
+    """3D residual bottleneck: conv1x1x1 -> conv3x3x3 -> conv1x1x1 + skip."""
+
+    expansion = 4
+
+    def __init__(self, in_channels, mid_channels, stride=(1, 1, 1), dropout=0.2, downsample=None):
+        super().__init__()
+        out_channels = mid_channels * self.expansion
+        self.conv1 = nn.Conv3d(in_channels, mid_channels, kernel_size=1, stride=(1, 1, 1), bias=False)
+        self.bn1 = nn.BatchNorm3d(mid_channels)
+        self.do1 = nn.Dropout3d(p=dropout) if dropout > 0 else nn.Identity()
+        self.conv2 = nn.Conv3d(mid_channels, mid_channels, kernel_size=3, stride=stride, padding=1, bias=False)
+        self.bn2 = nn.BatchNorm3d(mid_channels)
+        self.do2 = nn.Dropout3d(p=dropout) if dropout > 0 else nn.Identity()
+        self.conv3 = nn.Conv3d(mid_channels, out_channels, kernel_size=1, stride=(1, 1, 1), bias=False)
+        self.bn3 = nn.BatchNorm3d(out_channels)
+        self.relu = nn.ReLU(inplace=True)
+        self.downsample = downsample
+
+    def forward(self, x):
+        identity = x
+        out = self.relu(self.bn1(self.conv1(x)))
+        out = self.do1(out)
+        out = self.relu(self.bn2(self.conv2(out)))
+        out = self.do2(out)
+        out = self.bn3(self.conv3(out))
+        if self.downsample is not None:
+            identity = self.downsample(x)
+        out = out + identity
+        return self.relu(out)
+
+
+class ResNet3D(nn.Module):
+    """3D ResNet encoder-decoder built from Bottleneck3D blocks (no skips)."""
+
+    def __init__(self, in_channels=3, out_channels=3, base_channels=64, num_down=4, blocks_per_stage=3, dropout=0.2):
+        super().__init__()
+        self.num_down = num_down
+        self.conv_in = nn.Conv3d(in_channels, base_channels, kernel_size=7, stride=1, padding=3, bias=False)
+        self.bn_in = nn.BatchNorm3d(base_channels)
+        self.relu = nn.ReLU(inplace=True)
+
+        ch_in = base_channels
+        encoder_stages = []
+        for _ in range(num_down):
+            ch_out = ch_in * 2
+            encoder_stages.append(self._make_down_stage(ch_in, ch_out, blocks_per_stage, dropout))
+            ch_in = ch_out
+        self.encoder = nn.ModuleList(encoder_stages)
+
+        decoder_stages = []
+        for _ in range(num_down):
+            ch_out = ch_in // 2
+            decoder_stages.append(self._make_up_stage(ch_in, ch_out, blocks_per_stage, dropout))
+            ch_in = ch_out
+        self.decoder = nn.ModuleList(decoder_stages)
+
+        self.out_conv = nn.Conv3d(ch_in, out_channels, kernel_size=1)
+
+    def _make_down_stage(self, in_ch, out_ch, blocks, dropout):
+        stride = (1, 2, 2)
+        mid_ch = out_ch // Bottleneck3D.expansion
+        downsample = None
+        if (in_ch != out_ch) or (stride != (1, 1, 1)):
+            downsample = nn.Sequential(
+                nn.Conv3d(in_ch, out_ch, kernel_size=1, stride=stride, bias=False),
+                nn.BatchNorm3d(out_ch),
+            )
+        layers = [Bottleneck3D(in_ch, mid_ch, stride=stride, dropout=dropout, downsample=downsample)]
+        for _ in range(1, blocks):
+            layers.append(Bottleneck3D(out_ch, mid_ch, stride=(1, 1, 1), dropout=dropout, downsample=None))
+        return nn.Sequential(*layers)
+
+    def _make_up_stage(self, in_ch, out_ch, blocks, dropout):
+        up = nn.ConvTranspose3d(in_ch, out_ch, kernel_size=(1, 2, 2), stride=(1, 2, 2), bias=False)
+        mid_ch = out_ch // Bottleneck3D.expansion
+        block_list = []
+        current_in = out_ch
+        for _ in range(blocks):
+            downsample = None
+            if current_in != out_ch:
+                downsample = nn.Sequential(
+                    nn.Conv3d(current_in, out_ch, kernel_size=1, stride=1, bias=False),
+                    nn.BatchNorm3d(out_ch),
+                )
+            block_list.append(Bottleneck3D(current_in, mid_ch, stride=(1, 1, 1), dropout=dropout, downsample=downsample))
+            current_in = out_ch
+        return nn.ModuleList([up, nn.Sequential(*block_list)])
+
+    def forward(self, x):
+        target_t, target_h, target_w = x.shape[2], x.shape[3], x.shape[4]
+        out = self.relu(self.bn_in(self.conv_in(x)))
+        for stage in self.encoder:
+            out = stage(out)
+        for up, blocks in self.decoder:
+            out = up(out)
+            out = blocks(out)
+        if out.shape[2:] != (target_t, target_h, target_w):
+            out = F.interpolate(out, size=(target_t, target_h, target_w), mode="trilinear", align_corners=False)
+        return self.out_conv(out)
+
+
+class GatedConv3DStage(nn.Module):
+    """Single-pass (zero initial state) application of GatedConv3DBlock."""
+
+    def __init__(self, in_channels, out_channels, kernel_size=3, padding=1):
+        super().__init__()
+        self.block = GatedConv3DBlock(in_channels, out_channels, kernel_size, padding)
+
+    def forward(self, x):
+        b, _, t, h, w = x.shape
+        h0, c0 = self.block.init_hidden(b, t, h, w, x.device)
+        out, _ = self.block(x, h0, c0)
+        return out
+
+
+class EncoderDecoderGatedConv3D(nn.Module):
+    """Symmetric multi-scale gated Conv3D encoder-decoder with skip connections."""
+
+    def __init__(self, in_channels=3, out_channels=3, base_channels=32, num_levels=5, kernel_size=3, padding=1):
+        super().__init__()
+        self.num_levels = num_levels
+        self.initial_gate = GatedConv3DStage(in_channels, base_channels, kernel_size, padding)
+        self.pool = nn.MaxPool3d(kernel_size=(1, 2, 2), stride=(1, 2, 2))
+        self.down_gates = nn.ModuleList()
+        channels = base_channels
+        for _ in range(num_levels):
+            self.down_gates.append(GatedConv3DStage(channels, channels * 2, kernel_size, padding))
+            channels *= 2
+        self.bottleneck = GatedConv3DStage(channels, channels, kernel_size, padding)
+        self.up_transposes = nn.ModuleList()
+        self.up_gates = nn.ModuleList()
+        for _ in range(num_levels):
+            self.up_transposes.append(
+                nn.ConvTranspose3d(channels, channels // 2, kernel_size=(1, 2, 2), stride=(1, 2, 2))
+            )
+            self.up_gates.append(GatedConv3DStage(channels, channels // 2, kernel_size, padding))
+            channels //= 2
+        self.final_conv = nn.Conv3d(channels, out_channels, kernel_size=1)
+
+    def forward(self, x):
+        skip_connections = []
+        out = self.initial_gate(x)
+        for down in self.down_gates:
+            skip_connections.append(out)
+            out = self.pool(out)
+            out = down(out)
+        out = self.bottleneck(out)
+        for i in range(self.num_levels):
+            out = self.up_transposes[i](out)
+            skip = skip_connections[-(i + 1)]
+            if out.shape != skip.shape:
+                diff_t = skip.size(2) - out.size(2)
+                diff_h = skip.size(3) - out.size(3)
+                diff_w = skip.size(4) - out.size(4)
+                out = F.pad(
+                    out,
+                    [
+                        diff_w // 2, diff_w - diff_w // 2,
+                        diff_h // 2, diff_h - diff_h // 2,
+                        diff_t // 2, diff_t - diff_t // 2,
+                    ],
+                )
+            out = torch.cat([out, skip], dim=1)
+            out = self.up_gates[i](out)
+        return self.final_conv(out)
+
+
+def build_model(cfg: dict) -> nn.Module:
+    """
+    Default (no `arch` key, or arch='vona'): the two-stage UNet3D + StackedConv
+    VONA model. arch='resnet3d' / 'encdec_gatedconv3d': the comparative models,
+    trained through the same pipeline for an apples-to-apples split.
+    """
+    arch = str(cfg.get("arch", "vona")).strip().lower()
+
+    if arch == "resnet3d":
+        return ResNet3D(
+            in_channels=int(cfg.get("in_channels", 3)),
+            out_channels=int(cfg.get("out_channels", 3)),
+            base_channels=int(cfg.get("base_channels", 64)),
+            num_down=int(cfg.get("num_down", 4)),
+            blocks_per_stage=int(cfg.get("blocks_per_stage", 3)),
+            dropout=float(cfg.get("dropout", 0.2)),
+        )
+
+    if arch == "encdec_gatedconv3d":
+        return EncoderDecoderGatedConv3D(
+            in_channels=int(cfg.get("in_channels", 3)),
+            out_channels=int(cfg.get("out_channels", 3)),
+            base_channels=int(cfg.get("base_channels", 8)),
+            num_levels=int(cfg.get("num_levels", 4)),
+            kernel_size=int(cfg.get("kernel_size", 3)),
+            padding=int(cfg.get("padding", 1)),
+        )
+
+    if arch != "vona":
+        raise ValueError(f"Unsupported model.arch={arch!r}. Use 'vona' | 'resnet3d' | 'encdec_gatedconv3d'.")
+
     return Model(
         unet_in_channels=int(cfg["unet_in_channels"]),
         unet_base_channels=int(cfg["unet_base_channels"]),

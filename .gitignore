@@ -220,5 +220,10 @@ Dataset/
 *.jpeg
 
 Checkpoints/
+Checkpoints*/
 Model_Results_*/
 ~$EventsEtnaCLASS_Final.xlsx
+nohup*
+
+# Local data and generated outputs
+/convUnet_Lpips_Best.ipynb

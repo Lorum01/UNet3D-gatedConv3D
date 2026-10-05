@@ -143,25 +143,41 @@ def test_model_create_gifs_3ch(
 
     if checkpoint_path:
         state = torch.load(checkpoint_path, map_location=device)
-        model = torch.nn.DataParallel(model) # Per caricare modelli salvati con DataParallel
+
+        # Alcuni checkpoint sono un dict con lo state_dict annidato.
+        if isinstance(state, dict) and not any(hasattr(v, "shape") for v in state.values()):
+            for nested_key in ("state_dict", "model_state_dict", "model"):
+                if nested_key in state and isinstance(state[nested_key], dict):
+                    state = state[nested_key]
+                    break
+
+        # Normalizza il prefisso 'module.' (checkpoint salvati sotto DataParallel):
+        # qui il modello NON e' wrappato, quindi lo togliamo se presente.
+        if any(k.startswith("module.") for k in state):
+            state = {k[len("module."):] if k.startswith("module.") else k: v
+                     for k, v in state.items()}
 
         # Compatibility mapping: some checkpoints use attribute name `convlstm`
         # while current model uses `stackedConv`. Detect and remap keys.
-        ck_keys = list(state.keys()) if isinstance(state, dict) else []
         model_keys = list(model.state_dict().keys())
+        if any('convlstm' in k for k in state) and any('stackedConv' in k for k in model_keys):
+            state = {k.replace('convlstm', 'stackedConv'): v for k, v in state.items()}
 
-        if any('convlstm' in k for k in ck_keys) and any('stackedConv' in k for k in model_keys):
-            new_state = {}
-            for k, v in state.items():
-                new_k = k.replace('convlstm', 'stackedConv')
-                new_state[new_k] = v
-            state = new_state
-
-        try:
-            model.load_state_dict(state)
-        except RuntimeError:
-            # Fallback: try non-strict loading to tolerate minor naming/size diffs
-            model.load_state_dict(state, strict=False)
+        incompatible = model.load_state_dict(state, strict=False)
+        n_total = len(model_keys)
+        n_missing = len(incompatible.missing_keys)
+        if n_missing:
+            print(f"[test_utility] ATTENZIONE: {n_missing}/{n_total} parametri NON caricati "
+                  f"dal checkpoint {checkpoint_path}")
+            print(f"[test_utility]   esempi mancanti: {incompatible.missing_keys[:3]}")
+            print(f"[test_utility]   esempi inattesi: {incompatible.unexpected_keys[:3]}")
+            if n_missing > n_total // 2:
+                raise RuntimeError(
+                    f"Checkpoint incompatibile: caricati solo {n_total - n_missing}/{n_total} "
+                    f"parametri. Inferenza interrotta (il modello sarebbe non addestrato)."
+                )
+        else:
+            print(f"[test_utility] checkpoint caricato: {n_total}/{n_total} parametri OK")
     model.eval()
 
     denorm = build_denorm(mean, std, device, scale_to_neg1_pos1=scale_to_neg1_pos1)

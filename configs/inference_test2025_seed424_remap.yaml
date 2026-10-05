@@ -1,0 +1,44 @@
+mode: infer
+
+# Test finale sulle 2 serie 2025 con il checkpoint addestrato con split_seed 424.
+# Denorm/remap: (x+1)/2 -> [0,1] (denorm_from_neg1_pos1: true).
+
+paths:
+  dataset_folder: "/home/basile/workdir/vona_backup_branch/Dataset_test_2025"
+  excel_path: "/home/basile/workdir/vona_backup_branch/configs/test_2025/EventsTest2025.xlsx"
+
+data:
+  split_strategy: "by_class"
+  input_length: 4
+  prediction_length: 4
+  stride: 1
+  expected_input_shape: [4, 100, 100, 3]
+  scale_to_neg1_pos1: true
+
+dataloader:
+  batch_size_train: 4
+  batch_size_val: 4
+  batch_size_test: 4
+
+model:
+  unet_in_channels: 3
+  unet_base_channels: 32
+  unet_num_levels: 5
+  unet_out_channels: 64
+  stackedconv_hidden_dims: [64, 128, 256, 512]
+  stackedconv_kernel_size: 3
+  stackedconv_padding: 1
+  final_out_channels: 3
+
+infer:
+  device: "cuda:0"
+  checkpoint_path: "/home/basile/workdir/vona_legacy_window_split/Checkpoints_seed424/best_model.pth"
+  save_dir_by_class_root: "Model_Results_test2025/seed424_remap/by_class"
+  max_batches: 100000
+  gif_fps: 2
+  mean: null
+  std: null
+  denorm_from_neg1_pos1: true
+  save_images: true
+  save_gifs: true
+  show_plots: false

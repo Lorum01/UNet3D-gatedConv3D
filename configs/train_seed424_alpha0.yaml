@@ -1,0 +1,56 @@
+mode: train
+
+# ------------------------------------------------------------------------------
+# Identico a train_seed42_alpha0.yaml (split a livello di finestra, cartelle
+# "*_flipped" escluse, colonna Excel "Split" ignorata, nessun seed sui pesi,
+# train.alpha = 0.0) ma con split_seed: 424 invece di 42.
+#   alpha = peso della MSE nella loss combinata; (1-alpha) = peso della LPIPS.
+#   alpha 0.0 -> loss puramente LPIPS ; alpha 1.0 -> loss puramente MSE.
+#   Split identico agli altri run seed 424 (stesso split_seed 424).
+# ------------------------------------------------------------------------------
+
+paths:
+  dataset_folder: "/home/basile/workdir/vona/Dataset"
+  excel_path: "/home/basile/workdir/vona/EventsEtnaCLASS_Final.xlsx"
+
+data:
+  input_length: 4
+  prediction_length: 4
+  stride: 1
+  expected_input_shape: [4, 100, 100, 3]
+  scale_to_neg1_pos1: true
+  use_percent_distribution: true
+  class_pct:
+    1: {train: 0.7, val: 0.15, test: 0.15}
+    2: {train: 0.7, val: 0.15, test: 0.15}
+    3: {train: 0.7, val: 0.15, test: 0.15}
+    4: {train: 0.7, val: 0.15, test: 0.15}
+  split_seed: 424
+
+dataloader:
+  batch_size_train: 4
+  batch_size_val: 4
+  batch_size_test: 4
+
+model:
+  unet_in_channels: 3
+  unet_base_channels: 32
+  unet_num_levels: 5
+  unet_out_channels: 64
+  stackedconv_hidden_dims: [64, 128, 256, 512]
+  stackedconv_kernel_size: 3
+  stackedconv_padding: 1
+  final_out_channels: 3
+
+train:
+  device: "cuda"
+  num_epochs: 250
+  lr: 1.0e-3
+  checkpoint_dir: "Checkpoints_seed424_alpha0"
+  checkpoint_interval: 10
+  patience_early_stopping: 80
+  patience_lr_scheduler: 12
+  lr_factor: 0.5
+  lr_threshold: 1.0e-4
+  alpha: 0.0
+  show_plots: false

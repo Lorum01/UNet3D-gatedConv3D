@@ -1,0 +1,54 @@
+mode: train
+
+# ------------------------------------------------------------------------------
+# Comparative model Encoder-Decoder GatedConv3D (paper Sec. 3.4) trained through
+# THIS workspace's pipeline: identical window-level split (split_seed 424),
+# dataloader, loss (MSE+LPIPS, alpha 0.7) and train_loop as
+# `train_legacy_window_split.yaml`.
+# Only best_model.pth + last_model.pth are kept (checkpoint_interval huge).
+# ------------------------------------------------------------------------------
+
+paths:
+  dataset_folder: "/home/basile/workdir/vona/Dataset"
+  excel_path: "/home/basile/workdir/vona/EventsEtnaCLASS_Final.xlsx"
+
+data:
+  input_length: 4
+  prediction_length: 4
+  stride: 1
+  expected_input_shape: [4, 100, 100, 3]
+  scale_to_neg1_pos1: true
+  use_percent_distribution: true
+  class_pct:
+    1: {train: 0.7, val: 0.15, test: 0.15}
+    2: {train: 0.7, val: 0.15, test: 0.15}
+    3: {train: 0.7, val: 0.15, test: 0.15}
+    4: {train: 0.7, val: 0.15, test: 0.15}
+  split_seed: 424
+
+dataloader:
+  batch_size_train: 4
+  batch_size_val: 4
+  batch_size_test: 4
+
+model:
+  arch: "encdec_gatedconv3d"
+  in_channels: 3
+  out_channels: 3
+  base_channels: 8
+  num_levels: 4
+  kernel_size: 3
+  padding: 1
+
+train:
+  device: "cuda"
+  num_epochs: 250
+  lr: 1.0e-3
+  checkpoint_dir: "Checkpoints_legacy_encdec_gatedconv3d_seed424"
+  checkpoint_interval: 100000
+  patience_early_stopping: 80
+  patience_lr_scheduler: 12
+  lr_factor: 0.5
+  lr_threshold: 1.0e-4
+  alpha: 0.7
+  show_plots: false

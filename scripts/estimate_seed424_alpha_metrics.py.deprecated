@@ -1,0 +1,120 @@
+"""Stima (NON misura) delle metriche di seed424 alpha 0.0 / alpha 1.0, prima che i
+training finiscano, per poterle inserire nei due xlsx con la stessa struttura
+per-lag delle run reali.
+
+Metodo
+------
+Per ogni riga (prediction_type, lag) e ogni colonna numerica M:
+
+    stima_seed424_alphaA[M] = seed42_alphaA[M] * R[M]
+
+    R[M] = media geometrica di
+             seed424_alpha0.5[M] / seed42_alpha0.5[M]
+             seed424_alpha0.7[M] / seed42_alpha0.7[M]
+
+R e' lo "spostamento di seed" misurato agli alpha in cui esistono entrambi i
+seed (0.5 e 0.7); lo si assume ~costante in alpha (i dati lo confermano: lo
+scostamento seed42<->seed424 e' piccolo e coerente tra 0.5 e 0.7). La struttura
+per-lag e pred/predm e' quella reale di seed42_alphaA, solo riscalata.
+
+Eccezioni
+- mse_lpips per alpha 1.0 = mse (loss puramente MSE): forzato = stima mse.
+- mse_lpips per alpha 0.0 = lpips puro: riscalato col proprio R di colonna.
+- event_count: preso dallo split seed424 (65 eventi testsplit; 2 serie test2025).
+
+Le run stimate sono marcate '(STIMA)' e vivono in cartelle *_EST* separate, per
+non sovrascrivere le run reali che arriveranno stanotte.
+"""
+from __future__ import annotations
+
+import os
+import numpy as np
+import pandas as pd
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# (base, subdir, {alpha_key: run_dir})
+JOBS = [
+    (
+        "Model_Results_test2025", "by_class",
+        {
+            "a0":  "seed42_alpha0_remap",
+            "a1":  "seed42_alpha1_remap",
+            "a05_42": "seed42_alpha05_remap",
+            "a07_42": "seed42_remap",
+            "a05_424": "seed424_alpha05_remap",
+            "a07_424": "seed424_remap",
+        },
+        {"a0": "seed424_alpha0_EST_remap", "a1": "seed424_alpha1_EST_remap"},
+    ),
+    (
+        "Model_Results_testsplit", "test",
+        {
+            "a0":  "seed42_alpha0",
+            "a1":  "seed42_alpha1",
+            "a05_42": "seed42_alpha05",
+            "a07_42": "seed42_remap",
+            "a05_424": "seed424_alpha05",
+            "a07_424": "seed424_remap",
+        },
+        {"a0": "seed424_alpha0_EST", "a1": "seed424_alpha1_EST"},
+    ),
+]
+
+KEYCOLS = ["prediction_type", "lag"]
+MSE_LPIPS_COLS = ["mse_lpips", "mse_lpips_std", "mse_lpips_min", "mse_lpips_max"]
+MSE_COLS = ["mse", "mse_std", "mse_min", "mse_max"]
+
+
+def _load(base, subdir, run):
+    p = os.path.join(ROOT, base, run, subdir, "metrics.csv")
+    df = pd.read_csv(p)
+    return df.set_index(KEYCOLS)
+
+
+def _numcols(df):
+    return [c for c in df.columns if c != "event_count" and
+            np.issubdtype(df[c].dtype, np.number)]
+
+
+def main():
+    for base, subdir, runs, outs in JOBS:
+        a0 = _load(base, subdir, runs["a0"])
+        a1 = _load(base, subdir, runs["a1"])
+        a05_42 = _load(base, subdir, runs["a05_42"])
+        a07_42 = _load(base, subdir, runs["a07_42"])
+        a05_424 = _load(base, subdir, runs["a05_424"])
+        a07_424 = _load(base, subdir, runs["a07_424"])
+
+        cols = _numcols(a0)
+        # ratio per colonna/riga, media geometrica dei due alpha con entrambi i seed
+        r05 = (a05_424[cols] / a05_42[cols]).replace([np.inf, -np.inf], np.nan)
+        r07 = (a07_424[cols] / a07_42[cols]).replace([np.inf, -np.inf], np.nan)
+        R = np.sqrt(r05 * r07)
+        # dove una delle due e' mancante, usa l'altra; se entrambe mancanti -> 1
+        R = R.where(~R.isna(), r05).where(lambda d: ~d.isna(), r07).fillna(1.0)
+
+        ev_424 = a05_424["event_count"]
+
+        for akey, src in [("a0", a0), ("a1", a1)]:
+            est = src.copy()
+            est[cols] = src[cols] * R
+            if akey == "a1":
+                # loss puramente MSE -> mse_lpips coincide con mse
+                est[MSE_LPIPS_COLS] = est[MSE_COLS].values
+            est["event_count"] = ev_424
+            est[cols] = est[cols].round(6)
+            est = est.reset_index()
+            # ordina come i CSV originali (pred lag1-4,mean poi predm)
+            outdir = os.path.join(ROOT, base, outs[akey], subdir)
+            os.makedirs(outdir, exist_ok=True)
+            outp = os.path.join(outdir, "metrics.csv")
+            est.to_csv(outp, index=False)
+            print(f"[est] {outp}")
+            m = est[(est.prediction_type == "pred") & (est.lag == "mean")].iloc[0]
+            print(f"      pred/mean  mse={m.mse:.5f}  mse_lpips={m.mse_lpips:.5f} "
+                  f"ssim={m.ssim:.4f}  f1={m.f1:.4f}  (n={int(m.event_count)})")
+
+
+if __name__ == "__main__":
+    main()

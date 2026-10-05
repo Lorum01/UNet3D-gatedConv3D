@@ -1,0 +1,55 @@
+mode: infer
+
+# Inferenza + metriche sullo SPLIT DI TEST (a finestra, class_pct 70/15/15,
+# split_seed 42 -> 143 finestre) del modello resnet addestrato in questo workspace.
+# Output rimappato (x+1)/2 -> [0,1].
+
+paths:
+  dataset_folder: "/home/basile/workdir/vona/Dataset"
+  excel_path: "/home/basile/workdir/vona/EventsEtnaCLASS_Final.xlsx"
+
+data:
+  split_strategy: "train_val_test"
+  input_length: 4
+  prediction_length: 4
+  stride: 1
+  expected_input_shape: [4, 100, 100, 3]
+  scale_to_neg1_pos1: true
+  use_percent_distribution: true
+  class_pct:
+    1: {train: 0.7, val: 0.15, test: 0.15}
+    2: {train: 0.7, val: 0.15, test: 0.15}
+    3: {train: 0.7, val: 0.15, test: 0.15}
+    4: {train: 0.7, val: 0.15, test: 0.15}
+  split_seed: 42
+  split_out_dir: "Model_Results_testsplit/legacy_resnet"
+
+dataloader:
+  batch_size_train: 4
+  batch_size_val: 4
+  batch_size_test: 4
+
+model:
+  arch: resnet3d
+  in_channels: 3
+  out_channels: 3
+  base_channels: 64
+  num_down: 4
+  blocks_per_stage: 3
+  dropout: 0.2
+
+infer:
+  device: "cuda:0"
+  checkpoint_path: "/home/basile/workdir/vona_legacy_window_split/Checkpoints_legacy_resnet3d/best_model.pth"
+  save_dir_test: "Model_Results_testsplit/legacy_resnet/test"
+  max_batches: 100000
+  gif_fps: 2
+  mean: null
+  std: null
+  denorm_from_neg1_pos1: true
+  save_images: true
+  save_gifs: false
+  show_plots: false
+  run_test: true
+  run_val: false
+  run_train: false
